@@ -333,7 +333,16 @@ class Browser:
             except Exception:
                 await self.page.keyboard.press("Control+A")
                 await self.page.keyboard.press("Backspace")
-        await self.page.keyboard.type(text, delay=15)
+        # A newline must never act as Enter (it would submit). Keep it only in a <textarea> (inserted as
+        # text, no key events); in inputs and contenteditable composers it becomes a space.
+        lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        for i, line in enumerate(lines):
+            if i:
+                if info["tag"] == "textarea":
+                    await self.page.keyboard.insert_text("\n")
+                else:
+                    await self.page.keyboard.type(" ")
+            await self.page.keyboard.type(line, delay=15)
         msg = f"Typed into [{element_id}] \"{info['label']}\"."
         if press_enter:
             r = await self.press_key("Enter")
@@ -433,6 +442,8 @@ class Browser:
 
     async def press_key(self, key: str, confirmed: bool = False) -> str:
         page = await self._ensure_page()
+        if key.endswith(("\n", "\r")):  # a raw newline/CR key is Enter
+            key = key[:-1] + "Enter"
         parts = [p.strip().lower() for p in key.split("+")] if len(key) > 1 else [key.lower()]
         base, mods = (parts[-1] or "+"), set(parts[:-1])
         is_enter = base in ("enter", "return", "numpadenter")
@@ -454,7 +465,8 @@ class Browser:
         if (is_enter or base in ("space", " ")) and not mods:
             # Enter/Space on a focused button activates it: gate like a click on it.
             info = _widen(await page.evaluate(JS.FOCUSED_DESCRIBE))
-            if info and (info["tag"] == "button" or info["role"] == "button"):
+            if info and (info["tag"] == "button" or info["role"] in ("button", "menuitem", "link", "switch")
+                         or (info["tag"] == "input" and info["type"] in ("submit", "button", "image", "reset"))):
                 blocked = await self.gate.check(f"{page.url}|{info['label']}", info, confirmed)
                 if blocked:
                     return blocked

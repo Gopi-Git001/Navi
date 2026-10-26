@@ -22,6 +22,17 @@ for (const b of [post, icon, del, more]) b.onkeydown = e => { if (e.key === 'Ent
 composer.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); hit('ctrl-enter'); } };
 </script></body></html>"""
 
+HTML2 = """<!doctype html><html><head><title>Mock form</title></head><body>
+<form id=f onsubmit="event.preventDefault(); window.sent++">
+ <input id=q name=q aria-label="Note"><textarea id=ta aria-label="Long note"></textarea>
+ <input type=submit id=sub value="Place order">
+</form>
+<form onsubmit="event.preventDefault(); window.sent++"><input id=q2 aria-label="Other"><input type=image id=img alt="Send" width=20 height=20
+ src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></form>
+<input type=button id=ib value="Post" onclick="window.sent++">
+<div role=menuitem tabindex=0 id=mi aria-label="Delete" onclick="window.sent++" onkeydown="if(event.key=='Enter'||event.key==' ')this.click()">Del</div>
+<script>window.sent = 0;</script></body></html>"""
+
 
 class Cfg:
     headless = True
@@ -97,6 +108,45 @@ async def main():
         await b.close()
 
 
+async def main2():
+    gate = ConfirmationGate()
+    b = Browser(Cfg, gate)
+    await b.start()
+    try:
+        f = Cfg.output_dir / "form.html"; f.write_text(HTML2)
+        reg = ToolRegistry(b, None, None, Cfg.output_dir)
+        call = lambda n, a: reg.call(n, a)
+        sent = lambda: b.page.evaluate("window.sent")
+        gated = lambda r: r.text.startswith("CONFIRMATION_REQUIRED")
+        s = (await call("navigate", {"url": f.as_uri()})).text
+        note, ta, other = find(s, '"Note"'), find(s, '"Long note"'), find(s, '"Other"')
+        # newline characters in type_text must never act as Enter/submit
+        for text in ("hello\n", "a\r\nb", "x\r"):
+            for eid in (note, other):
+                r = await call("type_text", {"element_id": eid, "text": text})
+                assert await sent() == 0, (text, eid, r.text[:80])
+        await call("type_text", {"element_id": ta, "text": "line1\nline2"})
+        assert await b.page.evaluate("ta.value") == "line1\nline2" and await sent() == 0
+        # press_key with a raw newline / carriage return is Enter (and Ctrl+Enter)
+        await b.page.evaluate("q.focus()")
+        for k in ("\n", "\r", "Control+\n"):
+            r = await call("press_key", {"key": k})
+            assert gated(r) and await sent() == 0, (k, r.text[:80])
+        # Space/Enter on focused input[type=submit|button|image] and role=menuitem
+        for sel in ("sub", "ib", "img", "mi"):
+            for k in (" ", "Space", "Enter"):
+                await b.page.evaluate(f"{sel}.focus()")
+                r = await call("press_key", {"key": k})
+                assert gated(r) and await sent() == 0, (sel, k, r.text[:80])
+        print("GATE FORM TESTS PASSED")
+    finally:
+        await b.close()
+
+
+def test_gate_newline_and_input_buttons():
+    asyncio.run(main2())
+
+
 def test_default_channel_is_chrome(monkeypatch=None):
     import os, config
     old = {k: os.environ.get(k) for k in ("BROWSER_CHANNEL", "OPENAI_API_KEY", "PROFILE_DIR", "OUTPUT_DIR")}
@@ -120,3 +170,4 @@ def test_gate_buttons():
 if __name__ == "__main__":
     test_default_channel_is_chrome()
     asyncio.run(main())
+    asyncio.run(main2())
