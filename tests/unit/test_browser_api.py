@@ -546,15 +546,103 @@ async def test_approve_then_target_changed_is_refused_and_described_anew(fb):
     assert fb.executed == []
 
 
-async def test_unmatched_action_does_not_consume_the_approval(fb):
-    """Only the next MATCHING action consumes it: a different gated action raises and leaves it."""
+# DELIBERATE BEHAVIOR CHANGE requested by Agent Brain (owner of the confirm gate): this test used
+# to assert that a different gated action LEFT the approval in place. Approvals are now fail-closed:
+# any gated action that does not match the pending approval clears it.
+async def test_mismatched_gated_action_clears_the_approval(fb):
     cid, d = await held_send(fb)
     await fb.approve(d)
-    with pytest.raises(Gated):
+    with pytest.raises(Gated) as ei:
         await fb.press_key("Enter")  # different verb: not what was approved
+    assert ei.value.description.verb == "press Enter" and ei.value.description.verb != d.verb
+    assert not fb.approval_open
     assert fb.executed == []
-    assert (await fb.click(cid)).status == "ok"  # the approved one still runs, once
+    with pytest.raises(Gated):  # the originally approved action now needs a fresh approve()
+        await fb.click(cid)
+    assert fb.executed == []
+    await fb.approve(d)
+    assert (await fb.click(cid)).status == "ok"
     assert len(fb.executed) == 1
+
+
+async def test_mismatched_target_or_text_in_gated_action_clears_the_approval():
+    fb = FakeBrowser(two_post_timeline())
+    d1 = await fb.describe_pending_action(ToolCall("click", {"element_id": fb.element_id("send1")}))
+    await fb.approve(d1)
+    with pytest.raises(Gated) as ei:
+        await fb.click(fb.element_id("send2"))  # other target
+    assert ei.value.description.target != d1.target
+    assert not fb.approval_open
+    with pytest.raises(Gated):
+        await fb.click(fb.element_id("send1"))
+    assert fb.executed == []
+
+
+async def test_composer_text_edit_after_approve_clears_it(fb):
+    cid, d = await held_send(fb)
+    await fb.approve(d)
+    assert fb.approval_open
+    await fb.type_text(fb.element_id("composer"), " plus an edit")  # no gated action involved
+    assert not fb.approval_open
+    with pytest.raises(Gated) as ei:
+        await fb.click(cid)
+    assert ei.value.description.text == "great post plus an edit"
+    assert fb.executed == []
+    # and with a fresh approval of the NEW text it runs
+    await fb.approve(ei.value.description)
+    assert (await fb.click(cid)).status == "ok"
+    assert [e.text for e in fb.executed] == ["great post plus an edit"]
+
+
+@pytest.mark.parametrize("edit", ["type_clear", "press_key", "fill_form"])
+async def test_every_way_of_changing_composer_text_clears_the_approval(fb, edit):
+    cid, d = await held_send(fb)
+    comp = fb.element_id("composer")
+    await fb.approve(d)
+    if edit == "type_clear":
+        await fb.type_text(comp, "different", clear=True)
+    elif edit == "press_key":
+        await fb.click(comp)
+        await fb.approve(d)  # focusing is harmless; re-approve to isolate the key press
+        await fb.press_key("!")
+    else:
+        await fb.fill_form([{"element_id": comp, "value": "different"}])
+    assert not fb.approval_open
+    with pytest.raises(Gated):
+        await fb.click(cid)
+    assert fb.executed == []
+
+
+async def test_typing_the_same_text_back_does_not_change_it_but_other_fields_do_not_clear(fb):
+    cid, d = await held_send(fb)
+    await fb.approve(d)
+    await fb.type_text(fb.element_id("search"), "cats")  # a non-composer field: harmless
+    assert fb.approval_open
+    assert (await fb.click(cid)).status == "ok"
+
+
+async def test_empty_typing_does_not_change_composer_and_keeps_approval(fb):
+    cid, d = await held_send(fb)
+    await fb.approve(d)
+    await fb.type_text(fb.element_id("composer"), "")  # nothing changes
+    assert fb.approval_open
+    assert (await fb.click(cid)).status == "ok"
+
+
+@pytest.mark.parametrize("how", ["navigate", "tab_new", "history_reload", "halt"])
+async def test_navigation_tab_history_and_halt_still_clear_the_approval(how):
+    fb = FakeBrowser(x_page())
+    cid, d = await held_send(fb)
+    await fb.approve(d)
+    if how == "navigate":
+        await fb.navigate("https://x.test/n")
+    elif how == "tab_new":
+        await fb.tabs("new", url="https://x.test/t")
+    elif how == "history_reload":
+        await fb.history("reload")
+    else:
+        await fb.halt()
+    assert not fb.approval_open
 
 
 async def test_harmless_actions_do_not_consume_the_approval(fb):
@@ -562,7 +650,12 @@ async def test_harmless_actions_do_not_consume_the_approval(fb):
     await fb.approve(d)
     await fb.scroll("down")
     await fb.observe()
+    await fb.look()
+    await fb.read_page()
+    await fb.find_text("hello")
     await fb.hover(cid)
+    await fb.click(fb.element_id("more"))  # opening a menu is not gated
+    assert fb.approval_open
     assert (await fb.click(cid)).status == "ok"
     assert len(fb.executed) == 1
 
@@ -681,6 +774,11 @@ async def test_two_composers_on_one_page_have_different_targets_and_approvals_do
     with pytest.raises(Gated):
         await fb.click(fb.element_id("send2"))  # approval for post 1 is refused for post 2
     assert fb.executed == []
+    # Fail-closed (Agent Brain's deliberate change): the refused click cleared the approval for post 1,
+    # so post 1 needs a fresh approve() too. Previously this asserted the old approval still worked.
+    with pytest.raises(Gated):
+        await fb.click(fb.element_id("send1"))
+    await fb.approve(d1)
     assert (await fb.click(fb.element_id("send1"))).status == "ok"
     assert [e.target for e in fb.executed] == [d1.target]
 

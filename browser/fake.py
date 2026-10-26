@@ -189,6 +189,14 @@ class FakeBrowser:
             self._approved = None  # expired: gone for good
         return self._approved is not None
 
+    def _edit_clears_approval(self, el: FakeElement, old_value: str) -> None:
+        """Changing a composer's text after approve is a mismatch: clear the approval.
+
+        A composer is an editable element with a non-"none" risk. Other fields are harmless.
+        """
+        if el.editable and el.risk != "none" and el.value != old_value:
+            self._approved = None
+
     async def approve(self, description: ActionDescription) -> None:
         # Replaces any earlier approval (never stacks) and restarts the expiry window.
         self._approved = (description, self._clock() + self.approval_ttl)
@@ -198,13 +206,15 @@ class FakeBrowser:
         d = self._describe(call)
         if not is_gated(d):
             return
-        # Only the next MATCHING action consumes the approval. A different gated action
-        # raises Gated and leaves it; it still expires on its own, and navigation, tab
-        # change and halt() clear it. Nothing the model passes can approve anything.
+        # Fail closed: the approval is consumed only by the next MATCHING gated action.
+        # Any gated action that does not match (other verb, target or text) clears it and
+        # raises Gated with the new description; the next action then needs a fresh approve().
+        # Harmless actions leave it alone, except an edit of the composer text (see
+        # _edit_clears_approval). Navigation, tab change, history and halt() clear it too.
         if self.approval_open:
             approved, _ = self._approved  # type: ignore[misc]
+            self._approved = None
             if binding(approved) == binding(d):
-                self._approved = None
                 self.executed.append(d)
                 return
         raise Gated(d)
@@ -353,12 +363,16 @@ class FakeBrowser:
             if not el.editable:
                 return self._result("error", f"[{element_id}] is not a text field")
             self.focused = element_id
+            before = el.value
             if clear:
                 el.value = ""
+            self._edit_clears_approval(el, before)
             for i in range(0, len(text), 5):  # chunks so halt takes effect between them
                 if self.type_delay and not await self._sleep(self.type_delay * len(text[i:i + 5])):
+                    self._edit_clears_approval(el, before)
                     return self._result("cancelled", f"stopped after typing {len(el.value)} characters")
                 el.value += text[i:i + 5]
+            self._edit_clears_approval(el, before)
             if press_enter:
                 self._gate_or_run(ToolCall("press_key", {"key": "Enter"}))
             return self._result("ok", f"typed into [{element_id}]")
@@ -372,7 +386,9 @@ class FakeBrowser:
                 if el is None or el.sensitive or not el.editable:
                     skipped.append(f["element_id"])
                     continue
+                before = el.value
                 el.value = f["value"]
+                self._edit_clears_approval(el, before)
                 filled += 1
             note = f"; skipped sensitive or missing: {skipped}" if skipped else ""
             return self._result("ok", f"filled {filled} field(s), not submitted{note}")
@@ -406,7 +422,9 @@ class FakeBrowser:
                 return self._result("blocked", "focused field is sensitive; ask Gopi to type it himself")
             self._gate_or_run(ToolCall("press_key", {"key": key}))
             if el is not None and el.editable and not el.sensitive and len(key) == 1:
+                before = el.value
                 el.value += key
+                self._edit_clears_approval(el, before)
             return self._result("ok", f"pressed {key}")
         return await self._call("press_key", {"key": key}, go)
 

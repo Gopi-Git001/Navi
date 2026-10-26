@@ -16,9 +16,11 @@ Run: `python -m pytest` (needs `requirements-dev.txt`).
 
 - **`target` format:** always `"<page url> | <element ref>"`, optionally followed by `" | <label>"`, e.g. `https://x.test/post/123 | composer ref 14 | reply to @alice's post`. A send button reports the ref of the composer it sends. Different posts (different URL) or different composers on one page (different ref) never share a target. The gate may split on `" | "`; the URL is not meant to be spoken.
 - **`approve()` rules:** it is bound to the exact `risk`, `verb`, `target` and `text`.
-  - Consumed only by the next matching action; then the same action is gated again until a fresh approve.
+  - Consumed only by the next matching gated action; then the same action is gated again until a fresh approve.
   - Approving twice replaces the earlier approval; it never stacks two uses.
-  - A different or changed action (other target, edited composer text, other key) raises `Gated` with the new description and leaves the approval alone (decision 20: refused and re-read).
+  - **Fail closed:** any gated action that does not match the pending approval (other verb, target or text) clears it and raises `Gated` with the new description. The next action, including the originally approved one, needs a fresh `approve()`. (Agent Brain's rule; it replaced "leave it in place".)
+  - Changing the composer text after approve (`type_text`, `fill_form`, or a printing `press_key` into the composer) is a mismatch: it clears the approval at once, and the send then raises `Gated` with the edited text.
+  - Harmless actions leave it alone: observe, look, read_page, find_text, scroll, hover, opening a reply box or menu, focusing the composer, typing into non-composer fields, typing nothing.
   - An unused approval expires after 30 s (`approval_ttl`, injectable clock in the fake; the real browser takes the same arguments).
   - Navigation, tab change, history and `halt()` clear it.
   - Only `approve()` approves. The contract has no `confirmed` argument, so passing one to any tool is a `TypeError` and never approves. The dispatcher must not forward such an argument.

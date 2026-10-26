@@ -175,11 +175,15 @@ class BrowserController(Protocol):
     async def approve(self, description: ActionDescription) -> None:
         """Open a one-shot approval for exactly ``description`` (the gate calls this).
 
-        * Consumed only by the next action whose description matches exactly
+        * Consumed only by the next gated action whose description matches exactly
           (risk, verb, target, text); then the same action raises ``Gated`` again.
+        * Fail closed: any gated action that does NOT match clears the approval
+          and raises ``Gated`` with the new description; the next action needs a
+          fresh ``approve()``. Changing a composer's text after approve also
+          clears it. Harmless actions (observe, scroll, opening a reply box or
+          menu, typing into non-composer fields) leave it alone.
         * Approving again replaces the earlier approval (never stacks) and
           restarts the expiry window.
-        * A different gated action raises ``Gated`` and leaves the approval alone.
         * Expires if unused (default 30 s, injectable clock in the fake).
         * Cleared by navigation, tab change, history and ``halt()``.
         * If composer text or target differ at execution time the call is refused
