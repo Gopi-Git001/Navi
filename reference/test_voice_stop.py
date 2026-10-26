@@ -254,7 +254,6 @@ async def test_stop_clears_a_pending_confirmation_and_a_heard_confirm():
     first = await g.check("post", RISKY_BUTTON, confirmed=False)
     assert first.startswith("CONFIRMATION_REQUIRED")
     g.note_user("confirm")
-    g.note_user("yes")   # also covers the older word list
     s.stop_everything()
     assert g.pending == {} and g._last_affirm == 0.0
     retry = await asyncio.wait_for(g.check("post", RISKY_BUTTON, confirmed=True), 6)
@@ -269,7 +268,6 @@ async def test_a_fresh_ask_and_confirm_after_stop_still_works():
     s.stop_everything()
     assert (await g.check("post", RISKY_BUTTON, confirmed=False)).startswith("CONFIRMATION_REQUIRED")
     g.note_user("confirm")
-    g.note_user("yes")
     assert await g.check("post", RISKY_BUTTON, confirmed=True) is None
 
 
