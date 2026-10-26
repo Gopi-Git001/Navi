@@ -3,9 +3,10 @@
 Privacy rule: this file never holds typed field values, page text, or secrets.
 Only an allowlist of field names is written, and even those only with identifier-like
 values (lowercase letters, digits and _ . : -, at most 32 chars) or finite numbers.
-`source` and `reason` are stricter: only values from the closed sets SOURCES and REASONS
-below are written (an identifier regex alone would let a short typed secret like "hunter2"
-through).
+`source`, `reason`, `status`, `risk` and `tool` are stricter: only values from the closed
+sets SOURCES, REASONS, STATUSES, RISKS and TOOLS below are written (an identifier regex alone
+would let a short typed secret like "hunter2" through). Other fields (verb, call_id, run_id,
+clip) keep the identifier rule.
 Anything else is replaced by the fixed placeholder "redacted"; fields that are not on
 the allowlist are dropped. Only the NAMES of redacted or dropped fields are recorded.
 
@@ -48,9 +49,12 @@ SAFE_FIELDS = frozenset({
     "tool", "call_id", "status", "risk", "verb", "source", "turn", "reason",
     "count", "duration_ms", "run_id", "clip",
 })
-# Closed sets for the two fields that describe "who/why" and are most tempting to fill with
-# free text. Anything else is written as "redacted" (and the field name goes to dropped_fields).
+# Closed sets for the fields that describe "who/why/what" and are most tempting to fill with
+# free text: source, reason, status, risk and tool. Anything else (including non-strings) is
+# written as "redacted" (and the field name goes to dropped_fields).
 # Adjust here only; every value must be a lowercase identifier and not a user-typed string.
+# STATUSES, RISKS and TOOLS are hardcoded copies of docs/TOOL_CONTRACT.json (no runtime read, no
+# import of common.types); tests/unit/test_session_log_closed_sets.py fails when they drift.
 #
 # SOURCES: docs/TECH_SPEC.md section 3 (on_stop source: hotkey | ptt_down | voice | console;
 # on_utterance_end source: ptt_release | vad) plus the origins of events the agent logs.
@@ -70,7 +74,24 @@ REASONS: frozenset[str] = frozenset({
     "timeout", "stop_hotkey", "barge_in", "gate_expired", "gate_mismatch",
     "rate_limit", "none",
 })
-_ENUMERATED: dict[str, frozenset[str]] = {"source": SOURCES, "reason": REASONS}
+# STATUSES: contract tool_result.fields.status.
+STATUSES: frozenset[str] = frozenset({
+    "ok", "error", "blocked", "cancelled", "awaiting_confirmation",
+})
+# RISKS: "none" plus the contract's risk_classes_requiring_confirm.
+RISKS: frozenset[str] = frozenset({
+    "none", "post", "comment", "form_submit", "dm", "email", "delete", "purchase",
+})
+# TOOLS: the tool names in the contract's tools[].name.
+TOOLS: frozenset[str] = frozenset({
+    "navigate", "search_web", "observe", "look", "read_page", "click", "click_at",
+    "move_cursor", "hover", "type_text", "fill_form", "select_option", "scroll",
+    "find_text", "press_key", "history", "tabs", "wait", "extract_data",
+    "deep_research", "research_status",
+})
+_ENUMERATED: dict[str, frozenset[str]] = {
+    "source": SOURCES, "reason": REASONS, "status": STATUSES, "risk": RISKS, "tool": TOOLS,
+}
 _RESERVED = {"t_ms", "event", "dropped_fields"}
 PLACEHOLDER = "redacted"
 _IDENT = re.compile(r"[a-z0-9_.:-]{1,32}")

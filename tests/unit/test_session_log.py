@@ -131,11 +131,12 @@ def test_short_typed_secret_or_snippet_in_allowed_field_is_not_written(tmp_path,
 
 @pytest.mark.parametrize("ok", ["hotkey", "a1", "tool.end", "x:y", "snake_case-1", "a" * 32])
 def test_identifier_like_values_are_kept_in_non_enumerated_fields(tmp_path, ok):
-    # source/reason are closed sets (see below); every other allowed field keeps the identifier rule.
+    # source/reason/status/risk/tool are closed sets (see below and test_session_log_closed_sets.py);
+    # every other allowed field keeps the identifier rule.
     p = tmp_path / "s.jsonl"
-    SessionLog(p).mark("stop_requested", tool=ok, call_id=ok, status=ok, risk=ok, verb=ok, run_id=ok, clip=ok)
+    SessionLog(p).mark("stop_requested", call_id=ok, verb=ok, run_id=ok, clip=ok)
     row = read_lines(p)[0]
-    for f in ("tool", "call_id", "status", "risk", "verb", "run_id", "clip"):
+    for f in ("call_id", "verb", "run_id", "clip"):
         assert row[f] == ok
     assert "dropped_fields" not in row
 
@@ -228,7 +229,7 @@ def test_two_logs_same_file_threads_no_lost_or_interleaved_lines(tmp_path):
     def work(i):
         start.wait()
         for j in range(n):
-            logs[i].mark("tool_end", tool=f"w{i}", call_id=f"c{j}", status="ok")
+            logs[i].mark("tool_end", run_id=f"w{i}", call_id=f"c{j}", status="ok")
 
     ts = [threading.Thread(target=work, args=(i,)) for i in range(2)]
     [t.start() for t in ts]
@@ -237,7 +238,7 @@ def test_two_logs_same_file_threads_no_lost_or_interleaved_lines(tmp_path):
     assert len(lines) == 2 * n
     rows = [json.loads(l) for l in lines]  # every line valid JSON
     for i in range(2):
-        assert [r["call_id"] for r in rows if r["tool"] == f"w{i}"] == [f"c{j}" for j in range(n)]
+        assert [r["call_id"] for r in rows if r["run_id"] == f"w{i}"] == [f"c{j}" for j in range(n)]
 
 
 def test_many_threads_one_instance(tmp_path):
