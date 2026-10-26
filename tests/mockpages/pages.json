@@ -1,0 +1,21 @@
+{
+  "_comment": "The list of local mock pages. Every folder under tests/mockpages/ is named by one id here; docs/COMMAND_SCRIPT.csv may only use these ids (or 'none'). Owner: Navi QA.",
+  "pages": {
+    "mock_x": "X-shaped timeline, reply thread, composer, post/delete/DM requests (issue #7). Variants via ?variant=",
+    "site_nav": "Small multi-page site with search, results, links, a new-tab link and find-text targets",
+    "forms": "Forms with up to 6 fields and a submit button (name, email, address)",
+    "secrets": "Password and card fields, a card number in a plain text input, a checkout with a Buy button",
+    "dropdowns": "Native select, custom dropdown, long list",
+    "popups": "Cookie banner, modal dialog, window.open popup, confirm() dialog",
+    "overlays": "Overlay and click-through traps over a real button",
+    "shadow_dom": "Open, nested shadow roots",
+    "iframes": "Same-origin and cross-origin iframes, a fake card field inside an iframe",
+    "infinite_scroll": "Infinite and virtualized list that recycles DOM nodes",
+    "similar_buttons": "20 near-identical buttons",
+    "changing_page": "Page that changes mid-action (late banner, shifting layout, slow SPA route change)",
+    "scrape_read": "Read-aloud and scrape page: article up to 3,000 words, table of 50 items",
+    "injection": "Page text that tells the agent to act (click, type, say confirm)",
+    "research_fixture": "Offline research sources with answer keys, one source carrying injected text",
+    "challenge": "A captcha-like challenge page"
+  }
+}
