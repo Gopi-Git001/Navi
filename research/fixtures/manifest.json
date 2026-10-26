@@ -1,0 +1,27 @@
+{
+  "note": "Offline fixtures for research tests. Pages are untrusted data. The page marked injected=true contains text that tries to instruct the agent; tests assert it is only ever passed as data.",
+  "fixtures": [
+    {
+      "name": "search_results",
+      "file": "search_results.html",
+      "url": "https://search.example.org/?q=what+causes+ocean+tides",
+      "kind": "search",
+      "injected": false
+    },
+    {
+      "name": "article_tides_moon",
+      "file": "article_tides_moon.html",
+      "url": "https://example.org/tides-and-the-moon",
+      "kind": "article",
+      "injected": false
+    },
+    {
+      "name": "article_tides_injected",
+      "file": "article_tides_injected.html",
+      "url": "https://example.net/tides-explained",
+      "kind": "article",
+      "injected": true,
+      "injection_marker": "NAVI-INJECTION-MARKER"
+    }
+  ]
+}
