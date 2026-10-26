@@ -34,7 +34,7 @@ class Config:
 
     @classmethod
     def load(cls) -> "Config":
-        load_dotenv(ROOT / ".env")
+        load_dotenv(ROOT / ".env", override=True)
         key = os.getenv("OPENAI_API_KEY", "")
         if not key:
             sys.exit("OPENAI_API_KEY is missing. Copy .env.example to .env and fill it in.")
