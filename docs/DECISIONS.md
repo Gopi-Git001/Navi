@@ -1,6 +1,6 @@
 # Decisions
 
-Owner: Navi Architect. Every entry is binding on all bots until Gopi changes it. Entries 1-6 and 15-17 are Gopi's; entries 7-14 and 18-20 are the Architect's (7-14 approved by Gopi on 2026-10-25) and Gopi can overturn any of them.
+Owner: Navi Architect. Every entry is binding on all bots until Gopi changes it. Entries 1-6, 15-17 and 21 are Gopi's; entries 7-14 and 18-20 are the Architect's (7-14 approved by Gopi on 2026-10-25) and Gopi can overturn any of them.
 
 | # | Date | Decision | By |
 |---|---|---|---|
@@ -24,6 +24,7 @@ Owner: Navi Architect. Every entry is binding on all bots until Gopi changes it.
 | 18 | 2026-10-25 | **Confirm comes only from a push-to-talk turn.** The gate receives the final transcript of a push-to-talk turn plus a flag saying whether Navi was speaking while it was captured; never text from the model or from an always-listening turn. In always-listening mode the user holds the push-to-talk key to say "confirm". Stop wins over a held key: Ctrl+Shift+Space while Right Ctrl is held cancels the recording and acts as stop. | Architect |
 | 19 | 2026-10-25 | **Research and page-derived text never reaches the tool-holding model as instructions.** `notify` carries only fixed text built by our code ("Research finished, N sources"). The spoken summary is played as a separate no-tools response labeled as quoted web content; follow-up questions give the model the report as quoted data. Background updates cannot trigger any gated tool. | Architect |
 | 20 | 2026-10-25 | **The gate is bound to the held action.** The gate stores the exact target and text from `describe_pending_action`. If the composer text or target differs at execution time, the action is refused and re-read. Opening a reply box is not gated; sending it is. | Architect |
+| 21 | 2026-10-25 | **Windows rule.** Gopi uses Windows. Every milestone checkpoint includes a run on his Windows laptop (real mic and speakers, Right Ctrl push-to-talk, Ctrl+Shift+Space, Chrome). A test that only passes off-Windows does not count as done. QA's reports carry a "Windows-verified" column. | Gopi |
 
 ## Changing a decision
 Only Gopi can change 1-6. The Architect changes 7-14 after telling Gopi. Add a new row; never edit an old one.

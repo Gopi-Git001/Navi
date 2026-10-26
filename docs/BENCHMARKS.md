@@ -6,6 +6,8 @@ Tags: **(Gopi)** set by Gopi. **(plan)** from `PRODUCT_PLAN.md`. **(Architect)**
 
 Rules for every row: automated runs on QA's computer with recorded clips and the local mock pages; real-world numbers from Gopi's Windows laptop and normal laptop mic at each milestone checkpoint. Times are median, p95 and max; rates show numerator over denominator. Push-to-talk is measured first; always-listening is measured when it exists (M5) and only changes the default if it passes the false-trigger rows.
 
+Windows rule (decision 21): a row is done only when it also has a passing run on Gopi's Windows laptop. QA's report marks each row "Windows-verified" or not.
+
 ## A. Speed
 
 | ID | Measure | Target |
