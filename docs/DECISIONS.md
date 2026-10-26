@@ -1,6 +1,6 @@
 # Decisions
 
-Owner: Navi Architect. Every entry is binding on all bots until Gopi changes it. Entries 1-6, 15-17 and 21 are Gopi's; entries 7-14 and 18-20 are the Architect's (7-14 approved by Gopi on 2026-10-25) and Gopi can overturn any of them. Gopi approved the tool contract as drafted on 2026-10-25, so decision 13 stands.
+Owner: Navi Architect. Every entry is binding on all bots until Gopi changes it. Entries 1-6, 15-17 and 21 are Gopi's; entries 7-14 and 18-20 are the Architect's (7-14 approved by Gopi on 2026-10-25) and Gopi can overturn any of them. Entries 22-24 are **proposed additions, pending Gopi's OK**: they are safety-rule changes (they extend decisions 9, 3 and 10). Until Gopi OKs them they are not binding, but the contract and spec already follow them. Gopi approved the tool contract as drafted on 2026-10-25, so decision 13 stands.
 
 | # | Date | Decision | By |
 |---|---|---|---|
@@ -25,6 +25,9 @@ Owner: Navi Architect. Every entry is binding on all bots until Gopi changes it.
 | 19 | 2026-10-25 | **Research and page-derived text never reaches the tool-holding model as instructions.** `notify` carries only fixed text built by our code ("Research finished, N sources"). The spoken summary is played as a separate no-tools response labeled as quoted web content; follow-up questions give the model the report as quoted data. Background updates cannot trigger any gated tool. | Architect |
 | 20 | 2026-10-25 | **The gate is bound to the held action.** The gate stores the exact target and text from `describe_pending_action`. If the composer text or target differs at execution time, the action is refused and re-read. Opening a reply box is not gated; sending it is. | Architect |
 | 21 | 2026-10-25 | **Windows rule.** Gopi uses Windows. Every milestone checkpoint includes a run on his Windows laptop (real mic and speakers, Right Ctrl push-to-talk, Ctrl+Shift+Space, Chrome). A test that only passes off-Windows does not count as done. QA's reports carry a "Windows-verified" column. | Gopi |
+| 22 | 2026-10-25 | **Proposed addition, pending Gopi's OK. Extends decision 9.** A **disconnect** of the Realtime session also clears any held confirm, together with a new command, navigation, tab change and stop. This matches `confirm_rule.cleared_by` in the contract, benchmark E4 and M3. | Architect (proposed) |
+| 23 | 2026-10-25 | **Proposed addition, pending Gopi's OK. Extends decision 3.** The list of actions that need the spoken word "confirm" also includes **purchase**: post, comment, form submit, DM, email, delete, purchase. Decision 3 stays as Gopi wrote it; this only adds the seventh class, which the contract and TECH_SPEC section 5 already gate. | Architect (proposed) |
+| 24 | 2026-10-25 | **Proposed addition, pending Gopi's OK. Clarifies decision 10.** The network lock blocks X CreateTweet, DeleteTweet, DM send and any other non-GET request without an approval token, **except** an allow-list: search requests, the one-time X sign-in that the user types, and X follow, repost and like (and their undo). GET requests are not locked (accepted residual risk, see TECH_SPEC section 5). Block and mute on X are out of scope for v1. | Architect (proposed) |
 
 ## Changing a decision
-Only Gopi can change 1-6. The Architect changes 7-14 after telling Gopi. Add a new row; never edit an old one.
+Only Gopi can change 1-6. The Architect changes 7-14 after telling Gopi. Add a new row; never edit an old one. Entries 15-17 and 21 are Gopi's and only he changes them. The Architect changes 18-20 after telling Gopi, and any change to a safety rule (confirm gate, network lock, sensitive fields) needs Gopi's OK first.
