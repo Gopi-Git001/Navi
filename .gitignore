@@ -4,3 +4,5 @@
 output/
 __pycache__/
 .venv/
+logs/
+.navi_state/
