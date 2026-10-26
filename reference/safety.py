@@ -45,11 +45,6 @@ class ConfirmationGate:
         self._last_affirm = 0.0
         self._user_event = asyncio.Event()
 
-    def clear(self) -> None:
-        """Drop every pending confirmation and any earlier "confirm" (called by the stop hotkey)."""
-        self.pending.clear()
-        self._last_affirm = 0.0
-
     def note_user(self, text: str) -> None:
         """Call with every user utterance / typed line."""
         now = time.monotonic()

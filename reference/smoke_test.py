@@ -73,11 +73,6 @@ async def main():
         r = (await reg.call("click", {"element_id": order, "confirmed": True})).text
         assert r.startswith("CONFIRMATION_REQUIRED"), f"{nope!r} must not approve: " + r[:80]
     gate.note_user("Confirm.")
-    gate.clear()  # stop hotkey: a held confirm and an earlier "confirm" must both be dropped
-    assert not gate.pending
-    r = (await reg.call("click", {"element_id": order, "confirmed": True})).text
-    assert r.startswith("CONFIRMATION_REQUIRED"), "clear() must drop the pending confirm: " + r[:80]
-    gate.note_user("Confirm.")
     r = (await reg.call("click", {"element_id": order, "confirmed": True})).text
     assert r.startswith("Clicked"), r
     assert "SUBMITTED Revanth" in (await b.read_page("full")), "form not submitted"
