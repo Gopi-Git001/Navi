@@ -130,12 +130,80 @@ def test_short_typed_secret_or_snippet_in_allowed_field_is_not_written(tmp_path,
 
 
 @pytest.mark.parametrize("ok", ["hotkey", "a1", "tool.end", "x:y", "snake_case-1", "a" * 32])
-def test_identifier_like_values_are_kept(tmp_path, ok):
+def test_identifier_like_values_are_kept_in_non_enumerated_fields(tmp_path, ok):
+    # source/reason are closed sets (see below); every other allowed field keeps the identifier rule.
     p = tmp_path / "s.jsonl"
-    SessionLog(p).mark("stop_requested", source=ok, reason=ok)
+    SessionLog(p).mark("stop_requested", tool=ok, call_id=ok, status=ok, risk=ok, verb=ok, run_id=ok, clip=ok)
     row = read_lines(p)[0]
-    assert row["source"] == ok and row["reason"] == ok
+    for f in ("tool", "call_id", "status", "risk", "verb", "run_id", "clip"):
+        assert row[f] == ok
     assert "dropped_fields" not in row
+
+
+# ---- review round 2 (PR #17): source and reason accept ENUMERATED values only ----
+from agent.session_log import REASONS, SOURCES
+
+# TECH_SPEC section 3: on_stop sources and on_utterance_end sources (hardcoded: no doc dependency).
+SPEC_SOURCES = {"hotkey", "ptt_down", "voice", "console", "ptt_release", "vad"}
+
+
+def test_enumerations_are_closed_sets_of_identifiers():
+    for name, values in (("SOURCES", SOURCES), ("REASONS", REASONS)):
+        assert isinstance(values, frozenset) and values, name
+        assert all(re.fullmatch(r"[a-z0-9_]{1,32}", v) for v in values), name
+        assert PLACEHOLDER not in values, name
+
+
+def test_sources_cover_the_spec_and_the_architect_set():
+    assert SPEC_SOURCES <= SOURCES
+    assert {"ptt", "hotkey", "wake", "typed_test", "fake", "tool", "model", "user"} <= SOURCES
+
+
+def test_reasons_cover_the_architect_set():
+    assert {"timeout", "cancelled", "stop_hotkey", "barge_in", "error", "blocked",
+            "gate_expired", "gate_mismatch", "rate_limit", "none"} <= REASONS
+
+
+@pytest.mark.parametrize("field,values", [("source", SOURCES), ("reason", REASONS)])
+def test_every_enumerated_value_passes(tmp_path, field, values):
+    p = tmp_path / "s.jsonl"
+    log = SessionLog(p)
+    for v in sorted(values):
+        log.mark("stop_requested", **{field: v})
+    rows = read_lines(p)
+    assert [r[field] for r in rows] == sorted(values)
+    assert all("dropped_fields" not in r for r in rows)
+
+
+@pytest.mark.parametrize("field", ["source", "reason"])
+@pytest.mark.parametrize("value", ["hunter2", "buy_now", "tool.end", "x:y", "a1", "a" * 32, "hotkey2", "Hotkey"])
+def test_identifier_shaped_but_not_enumerated_is_redacted(tmp_path, field, value):
+    p = tmp_path / "s.jsonl"
+    SessionLog(p).mark("stop_requested", **{field: value})
+    raw = p.read_text(encoding="utf-8")
+    assert value not in raw
+    row = read_lines(p)[0]
+    assert row[field] == PLACEHOLDER
+    assert row["dropped_fields"] == [field]
+
+
+def test_enumeration_is_exact_match_and_does_not_leak_into_other_field(tmp_path):
+    # a reason word is not a valid source and vice versa, unless it is in both sets
+    p = tmp_path / "s.jsonl"
+    only_reason = sorted(REASONS - SOURCES)[0]
+    only_source = sorted(SOURCES - REASONS)[0]
+    SessionLog(p).mark("stop_requested", source=only_reason, reason=only_source)
+    row = read_lines(p)[0]
+    assert row["source"] == PLACEHOLDER and row["reason"] == PLACEHOLDER
+    assert row["dropped_fields"] == ["reason", "source"]
+
+
+@pytest.mark.parametrize("value", [None, True, 1, 1.5, ["hotkey"], {"a": "hotkey"}])
+def test_non_string_source_and_reason_are_redacted(tmp_path, value):
+    p = tmp_path / "s.jsonl"
+    SessionLog(p).mark("stop_requested", source=value, reason=value)
+    row = read_lines(p)[0]
+    assert row["source"] == PLACEHOLDER and row["reason"] == PLACEHOLDER
 
 
 def test_non_finite_numbers_do_not_break_json(tmp_path):
