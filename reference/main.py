@@ -15,6 +15,27 @@ import sys
 from config import Config
 
 
+def is_quota_error(exc: BaseException) -> bool:
+    """True if exc (or anything it was raised from) says the OpenAI account is out of credits."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        parts = [str(exc), repr(exc)]
+        for holder in (getattr(exc, "rcvd", None), getattr(exc, "sent", None)):
+            parts.append(str(getattr(holder, "reason", "") or ""))  # websocket close reason
+        body = getattr(getattr(exc, "response", None), "body", None)
+        if body:
+            parts.append(body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body))
+        text = " ".join(parts).lower()
+        if "insufficient_quota" in text or "exceeded your current quota" in text:
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+OUT_OF_CREDITS = "Out of OpenAI credits"
+
+
 def mic_test(seconds: int = 6) -> None:
     import numpy as np
     import sounddevice as sd
@@ -66,6 +87,9 @@ async def amain(args) -> None:
                 await session.run()
                 break  # /quit
             except (OSError, ConnectionError, WebSocketException) as e:
+                if is_quota_error(e):
+                    print(f"{OUT_OF_CREDITS}. Add credit at https://platform.openai.com/settings/organization/billing and restart Navi.")
+                    sys.exit(1)
                 print(f"Connection lost ({e}); reconnecting in 3s...")
                 await asyncio.sleep(3)
     finally:
