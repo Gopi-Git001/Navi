@@ -27,6 +27,9 @@ def is_approval(text: str) -> bool:
     return (text or "").strip().strip(" \t\r\n.,!?;:\"'").lower() == APPROVAL_WORD
 
 
+# A held action must be approved within this many seconds of the read-back.
+CONFIRM_TTL = 30.0
+
 NEGATE = re.compile(r"\b(no|nope|don'?t|do not|stop|cancel|wait|hold on|never ?mind)\b", re.I)
 
 
@@ -50,9 +53,11 @@ class ConfirmationGate:
         now = time.monotonic()
         if is_approval(text):
             self._last_affirm = now
-        elif NEGATE.search(text):
+        else:
+            # Any other utterance cancels an unused "confirm" so it cannot carry over.
             self._last_affirm = 0.0
-            self.pending.clear()
+            if NEGATE.search(text):
+                self.pending.clear()
         self._user_event.set()
 
     async def check(self, key: str, info: dict | None, confirmed: bool) -> str | None:
@@ -60,6 +65,9 @@ class ConfirmationGate:
         if not is_risky(info):
             return None
         issued = self.pending.get(key)
+        if issued is not None and time.monotonic() - issued > CONFIRM_TTL:
+            self.pending.pop(key, None)  # expired: must be read back again
+            issued = None
         if confirmed and issued is not None:
             # The user's transcript can arrive a moment after the model reacts to the audio.
             deadline = time.monotonic() + 4.0
@@ -69,8 +77,11 @@ class ConfirmationGate:
                     await asyncio.wait_for(self._user_event.wait(), deadline - time.monotonic())
                 except asyncio.TimeoutError:
                     break
-            if self._last_affirm > issued:
-                self.pending.pop(key, None)
+            now = time.monotonic()
+            if self._last_affirm > issued and now - self._last_affirm <= CONFIRM_TTL and now - issued <= CONFIRM_TTL:
+                # One "confirm" approves exactly one action: consume it and drop other held actions.
+                self._last_affirm = 0.0
+                self.pending.clear()
                 return None
         self.pending[key] = time.monotonic()
         what = (info or {}).get("label") or "this button"

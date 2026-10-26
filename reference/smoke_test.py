@@ -39,7 +39,30 @@ def find(state, label):
             return int(line[1:line.index("]")])
     raise AssertionError(f"{label!r} not in:\n{state}")
 
+async def gate_rules():
+    import safety
+    info = {"label": "Post", "isSubmit": True}
+    req = lambda r: r is not None and r.startswith("CONFIRMATION_REQUIRED")
+    g = ConfirmationGate()
+    await g.check("a", info, False); await g.check("b", info, False)
+    g.note_user("confirm")
+    assert await g.check("a", info, True) is None, "confirm should approve the held action"
+    assert req(await g.check("b", info, True)), "one confirm must approve only one action"
+    g = ConfirmationGate()
+    await g.check("a", info, False); g.note_user("confirm"); g.note_user("scroll down")
+    assert req(await g.check("a", info, True)), "unrelated command must cancel an unused confirm"
+    old = safety.CONFIRM_TTL
+    safety.CONFIRM_TTL = 0.2
+    try:
+        g = ConfirmationGate()
+        await g.check("a", info, False); g.note_user("confirm"); await asyncio.sleep(0.4)
+        assert req(await g.check("a", info, True)), "confirm must expire"
+    finally:
+        safety.CONFIRM_TTL = old
+    print("gate rules OK")
+
 async def main():
+    await gate_rules()
     gate = ConfirmationGate()
     b = Browser(Cfg, gate)
     await b.start()
