@@ -2,7 +2,7 @@
 
 The model cannot bypass this by itself: a gated action only goes through when
 (1) the gate was raised for that exact element, and (2) the *user* said
-something affirmative after it was raised. The model's own `confirmed=true`
+the single word "confirm" after it was raised. The model's own `confirmed=true`
 is necessary but not sufficient.
 """
 from __future__ import annotations
@@ -18,10 +18,18 @@ RISKY = re.compile(
     re.I,
 )
 SAFE = re.compile(r"\b(search|find|go|filter|sort|next|previous|prev|more|load|show|view|sign in|log ?in|continue reading)\b", re.I)
-AFFIRM = re.compile(
-    r"\b(yes|yeah|yep|yup|sure|confirm(ed)?|go ahead|do it|proceed|okay|ok|approved?|send it|submit it|place it|correct)\b",
-    re.I,
-)
+# Approval is ONLY the whole utterance "confirm" (case and surrounding punctuation ignored).
+# "yes", "okay", "go ahead", "sure", "do it" and "confirm" inside a longer sentence do not approve.
+APPROVAL_WORD = "confirm"
+
+
+def is_approval(text: str) -> bool:
+    return (text or "").strip().strip(" \t\r\n.,!?;:\"'").lower() == APPROVAL_WORD
+
+
+# A held action must be approved within this many seconds of the read-back.
+CONFIRM_TTL = 30.0
+
 NEGATE = re.compile(r"\b(no|nope|don'?t|do not|stop|cancel|wait|hold on|never ?mind)\b", re.I)
 
 
@@ -43,10 +51,12 @@ class ConfirmationGate:
     def note_user(self, text: str) -> None:
         """Call with every user utterance / typed line."""
         now = time.monotonic()
-        if AFFIRM.search(text) and not NEGATE.search(text):
+        if is_approval(text):
             self._last_affirm = now
-        elif NEGATE.search(text):
+        else:
+            # Any other utterance cancels an unused "confirm" so it cannot carry over.
             self._last_affirm = 0.0
+            # ...and so does the held action: after any other command it must be read back again.
             self.pending.clear()
         self._user_event.set()
 
@@ -55,6 +65,9 @@ class ConfirmationGate:
         if not is_risky(info):
             return None
         issued = self.pending.get(key)
+        if issued is not None and time.monotonic() - issued > CONFIRM_TTL:
+            self.pending.pop(key, None)  # expired: must be read back again
+            issued = None
         if confirmed and issued is not None:
             # The user's transcript can arrive a moment after the model reacts to the audio.
             deadline = time.monotonic() + 4.0
@@ -64,13 +77,17 @@ class ConfirmationGate:
                     await asyncio.wait_for(self._user_event.wait(), deadline - time.monotonic())
                 except asyncio.TimeoutError:
                     break
-            if self._last_affirm > issued:
-                self.pending.pop(key, None)
+            now = time.monotonic()
+            if self._last_affirm > issued and now - self._last_affirm <= CONFIRM_TTL and now - issued <= CONFIRM_TTL:
+                # One "confirm" approves exactly one action: consume it and drop other held actions.
+                self._last_affirm = 0.0
+                self.pending.clear()
                 return None
         self.pending[key] = time.monotonic()
         what = (info or {}).get("label") or "this button"
         return (
             f"CONFIRMATION_REQUIRED: clicking '{what}' looks consequential (submit/send/pay/delete/etc). "
-            "Tell the user exactly what will happen and ask them to say yes. Only after they clearly say yes, "
-            "call this same tool again with the same target and confirmed=true. If they say no, don't click."
+            "Tell the user exactly what will happen and ask them to say the single word 'confirm'. "
+            "Only 'confirm' approves: 'yes', 'okay' and 'go ahead' do not. After they say 'confirm', "
+            "call this same tool again with the same target and confirmed=true. If they say anything else, don't click."
         )

@@ -50,7 +50,33 @@ def find(state, label):
             return int(line[1:line.index("]")])
     raise AssertionError(f"{label!r} not in:\n{state}")
 
+async def gate_rules():
+    import safety
+    info = {"label": "Post", "isSubmit": True}
+    req = lambda r: r is not None and r.startswith("CONFIRMATION_REQUIRED")
+    g = ConfirmationGate()
+    await g.check("a", info, False); await g.check("b", info, False)
+    g.note_user("confirm")
+    assert await g.check("a", info, True) is None, "confirm should approve the held action"
+    assert req(await g.check("b", info, True)), "one confirm must approve only one action"
+    g = ConfirmationGate()
+    await g.check("a", info, False); g.note_user("confirm"); g.note_user("scroll down")
+    assert req(await g.check("a", info, True)), "unrelated command must cancel an unused confirm"
+    g = ConfirmationGate()
+    await g.check("a", info, False); g.note_user("go to google dot com"); g.note_user("confirm")
+    assert req(await g.check("a", info, True)), "confirm after an unrelated command must not approve the old held action"
+    old = safety.CONFIRM_TTL
+    safety.CONFIRM_TTL = 0.2
+    try:
+        g = ConfirmationGate()
+        await g.check("a", info, False); g.note_user("confirm"); await asyncio.sleep(0.4)
+        assert req(await g.check("a", info, True)), "confirm must expire"
+    finally:
+        safety.CONFIRM_TTL = old
+    print("gate rules OK")
+
 async def main():
+    await gate_rules()
     gate = ConfirmationGate()
     b = Browser(Cfg, gate)
     await b.start()
@@ -79,7 +105,11 @@ async def main():
     assert r.startswith("CONFIRMATION_REQUIRED"), r
     r = (await reg.call("click", {"element_id": order, "confirmed": True})).text
     assert r.startswith("CONFIRMATION_REQUIRED"), "model self-confirm must not pass: " + r[:80]
-    gate.note_user("yes, place it")
+    for nope in ("yes", "yes, place it", "okay", "go ahead", "sure", "do it", "please confirm it", "I do not confirm"):
+        gate.note_user(nope)
+        r = (await reg.call("click", {"element_id": order, "confirmed": True})).text
+        assert r.startswith("CONFIRMATION_REQUIRED"), f"{nope!r} must not approve: " + r[:80]
+    gate.note_user("Confirm.")
     r = (await reg.call("click", {"element_id": order, "confirmed": True})).text
     assert r.startswith("Clicked"), r
     assert "SUBMITTED Revanth" in (await b.read_page("full")), "form not submitted"
