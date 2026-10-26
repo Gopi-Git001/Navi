@@ -1,0 +1,76 @@
+"""Hard confirmation gate for consequential clicks.
+
+The model cannot bypass this by itself: a gated action only goes through when
+(1) the gate was raised for that exact element, and (2) the *user* said
+something affirmative after it was raised. The model's own `confirmed=true`
+is necessary but not sufficient.
+"""
+from __future__ import annotations
+
+import asyncio
+import re
+import time
+
+RISKY = re.compile(
+    r"\b(pay|payment|purchase|buy|order|checkout|check out|submit|send|delete|remove|confirm|transfer|"
+    r"sign up|register|post|publish|apply|book|reserve|subscribe|unsubscribe|donate|withdraw|cancel (my )?"
+    r"(account|subscription|order)|tweet|reply|save changes)\b",
+    re.I,
+)
+SAFE = re.compile(r"\b(search|find|go|filter|sort|next|previous|prev|more|load|show|view|sign in|log ?in|continue reading)\b", re.I)
+AFFIRM = re.compile(
+    r"\b(yes|yeah|yep|yup|sure|confirm(ed)?|go ahead|do it|proceed|okay|ok|approved?|send it|submit it|place it|correct)\b",
+    re.I,
+)
+NEGATE = re.compile(r"\b(no|nope|don'?t|do not|stop|cancel|wait|hold on|never ?mind)\b", re.I)
+
+
+def is_risky(info: dict | None) -> bool:
+    if not info:
+        return False
+    label = info.get("label", "") or ""
+    if RISKY.search(label):
+        return True
+    return bool(info.get("isSubmit")) and not SAFE.search(label)
+
+
+class ConfirmationGate:
+    def __init__(self) -> None:
+        self.pending: dict[str, float] = {}
+        self._last_affirm = 0.0
+        self._user_event = asyncio.Event()
+
+    def note_user(self, text: str) -> None:
+        """Call with every user utterance / typed line."""
+        now = time.monotonic()
+        if AFFIRM.search(text) and not NEGATE.search(text):
+            self._last_affirm = now
+        elif NEGATE.search(text):
+            self._last_affirm = 0.0
+            self.pending.clear()
+        self._user_event.set()
+
+    async def check(self, key: str, info: dict | None, confirmed: bool) -> str | None:
+        """Return None if allowed, else a message for the model."""
+        if not is_risky(info):
+            return None
+        issued = self.pending.get(key)
+        if confirmed and issued is not None:
+            # The user's transcript can arrive a moment after the model reacts to the audio.
+            deadline = time.monotonic() + 4.0
+            while self._last_affirm <= issued and time.monotonic() < deadline:
+                self._user_event.clear()
+                try:
+                    await asyncio.wait_for(self._user_event.wait(), deadline - time.monotonic())
+                except asyncio.TimeoutError:
+                    break
+            if self._last_affirm > issued:
+                self.pending.pop(key, None)
+                return None
+        self.pending[key] = time.monotonic()
+        what = (info or {}).get("label") or "this button"
+        return (
+            f"CONFIRMATION_REQUIRED: clicking '{what}' looks consequential (submit/send/pay/delete/etc). "
+            "Tell the user exactly what will happen and ask them to say yes. Only after they clearly say yes, "
+            "call this same tool again with the same target and confirmed=true. If they say no, don't click."
+        )
