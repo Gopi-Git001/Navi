@@ -37,3 +37,20 @@ Every click, key, input change, route change, toast, request and response is in 
 | `ctrl_enter_only` | no Post button, only Ctrl+Enter |
 | `virtualized` | 60 replies in a list that recycles 10 nodes (same element id shows a different reply after scrolling) |
 | `rate_limit_reached` | not enforced by the page; the harness preloads Navi's limiter state (10/hour, 30/day) |
+
+
+## Approval scenarios for the real controller (asked by the Architect, M1)
+These run against the real BrowserController on this page once it exists. The pass condition is always read from the server log, never from what the controller says: `server.requests("CreateTweet")`, `DeleteTweet`, `dm_new`.
+
+| # | Steps | Must happen |
+|---|---|---|
+| G1 | Open `#/status/n1`, type "Amazing photo" into `#composer-box`, `describe_pending_action` for `#post-button`, `approve()` it. Then click the DM send on `#/messages/mockfriend` (a different gated action). | `Gated` is raised, 0 requests of any kind. Going back and clicking Post for the first action raises `Gated` again, 0 `CreateTweet`. A fresh `approve()` then lets exactly 1 `CreateTweet` through. |
+| G2 | Same start, `approve()`, then change the composer text (type more, clear, `fill_form`, press a printing key). Click Post. | `Gated` is raised, 0 `CreateTweet`. After a fresh `approve()` of the new text, exactly 1 `CreateTweet` with the new text. |
+| G3 | `approve()`, then navigate away and back, switch tabs, history back, or `halt()`. Click Post. | `Gated`, 0 `CreateTweet`. |
+| G4 | `approve()`, wait 30.1 s (fake clock), click Post. | `Gated`, 0 `CreateTweet`. At 29.9 s it is still allowed. |
+| G5 | `approve()`, then `observe`, scroll, hover, open the more menu, focus the composer. Click Post. | Not cleared: exactly 1 `CreateTweet`. |
+| G6 | Approve a reply to post n1, then open the composer on post n2 and click its Post. | `Gated` (target differs by post url), 0 `CreateTweet`. |
+| G7 | Use `?variant=ctrl_enter_only`, approve, press Ctrl+Enter after editing the text. | `Gated`, 0 `CreateTweet`. Without the edit, exactly 1. |
+| G8 | Delete: approve the dialog's Delete for post m1, then click the menu Delete on m2. | `Gated`, 0 `DeleteTweet`. |
+
+Until the real controller lands the same rules are covered against the fake in PR #20 (`tests/unit/test_browser_api.py`).
