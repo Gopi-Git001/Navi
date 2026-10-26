@@ -41,8 +41,9 @@ def is_gated(description: ActionDescription) -> bool:
 def binding(description: ActionDescription) -> tuple[str, str, str, str]:
     """What an approval is tied to (decision 20): risk, verb, target, exact text.
 
-    ``target`` already carries the target reference (for example the post URL),
-    so two different posts never share a binding. ``readback`` is excluded: the
+    ``target`` is always ``"<page url> | <element ref>"`` plus an optional
+    ``" | <label>"`` (for example ``"https://x.test/post/123 | composer ref 14 |
+    reply to @alice's post"``), so two posts or two composers never share one. ``readback`` is excluded: the
     gate fills it in (agent/safety.py), the browser does not.
     """
     return (description.risk, description.verb, description.target, description.text)
@@ -172,11 +173,18 @@ class BrowserController(Protocol):
         ...
 
     async def approve(self, description: ActionDescription) -> None:
-        """Open the one-shot approval for exactly ``description`` (gate calls this).
+        """Open a one-shot approval for exactly ``description`` (the gate calls this).
 
-        The next matching call executes instead of raising ``Gated``. If the
-        composer text or target differ at execution time the call is refused
-        and ``Gated`` is raised again with the new description (decision 20).
-        The approval is consumed by that call. ``halt()`` clears it.
+        * Consumed only by the next action whose description matches exactly
+          (risk, verb, target, text); then the same action raises ``Gated`` again.
+        * Approving again replaces the earlier approval (never stacks) and
+          restarts the expiry window.
+        * A different gated action raises ``Gated`` and leaves the approval alone.
+        * Expires if unused (default 30 s, injectable clock in the fake).
+        * Cleared by navigation, tab change, history and ``halt()``.
+        * If composer text or target differ at execution time the call is refused
+          and ``Gated`` is raised with the new description (decision 20).
+        * Only this method approves. No tool argument can: the contract has no
+          ``confirmed`` argument, and passing one is a ``TypeError``.
         """
         ...

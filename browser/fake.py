@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 from browser.api import ElementInfo, PageState, ToolCall, binding, is_gated
 from common.types import ActionDescription, Gated, ToolResult
@@ -36,7 +36,7 @@ class FakeElement:
     risk: str = "none"  # risk class if activating this sends/deletes/etc.
     verb: str = ""  # defaults from risk ("post", "delete", ...)
     target: str = ""  # e.g. "reply to @alice's post"
-    target_ref: str = ""  # stable ref, e.g. the post URL
+    ref: str = ""  # stable element ref, e.g. "composer ref 14"; defaults to "<key or role> ref <n>"
     editable: bool = False  # composer / text box
     value: str = ""  # editable content (composer text read from the page)
     controls: str = ""  # key of the composer this button sends
@@ -62,7 +62,15 @@ class RecordedCall:
 
 
 class FakeBrowser:
-    def __init__(self, page: Optional[FakePage] = None, type_delay: float = 0.0):
+    def __init__(
+        self,
+        page: Optional[FakePage] = None,
+        type_delay: float = 0.0,
+        clock: Callable[[], float] = time.monotonic,
+        approval_ttl: float = 30.0,
+    ):
+        self._clock = clock  # injectable so tests never really sleep
+        self.approval_ttl = approval_ttl
         self.page = page or FakePage(url="about:blank", title="blank")
         self.pages: dict[str, FakePage] = {}
         self.type_delay = type_delay
@@ -78,7 +86,7 @@ class FakeBrowser:
         self._idle = asyncio.Event()
         self._idle.set()
         self._lock = asyncio.Lock()
-        self._approved: Optional[ActionDescription] = None
+        self._approved: Optional[tuple[ActionDescription, float]] = None  # (description, expires_at)
 
     # ---- helpers ---------------------------------------------------------
 
@@ -127,10 +135,12 @@ class FakeBrowser:
         if not text:
             text = composer.value if composer else (el.value if el.editable else "")
         v = verb or el.verb or (f"click {el.risk}" if el.risk != "none" else "click")
-        target = el.target or (composer.target if composer else "") or el.name
-        ref = el.target_ref or (composer.target_ref if composer else "")
-        if ref:
-            target = f"{target} ({ref})"  # the ref is part of the bound target (decision 20)
+        owner = composer or el  # a send button is identified by the composer it sends
+        ref = owner.ref or f"{owner.key or owner.role} ref {self.page.elements.index(owner) + 1}"
+        # target always = "<page url> | <element ref>" (+ " | <label>"): unique per post and element,
+        # and part of what an approval is bound to (decision 20). The gate may split on " | ".
+        label = el.target or (composer.target if composer else "")
+        target = f"{self.page.url} | {ref}" + (f" | {label}" if label else "")
         # readback is filled in by the gate (agent/safety.py), not by the browser.
         return ActionDescription(risk=el.risk, verb=v, target=target, text=text)  # type: ignore[arg-type]
 
@@ -172,18 +182,31 @@ class FakeBrowser:
     async def describe_pending_action(self, call: ToolCall) -> ActionDescription:
         return self._describe(call)
 
+    @property
+    def approval_open(self) -> bool:
+        """True while an unused, unexpired approval is held (test helper)."""
+        if self._approved is not None and self._clock() >= self._approved[1]:
+            self._approved = None  # expired: gone for good
+        return self._approved is not None
+
     async def approve(self, description: ActionDescription) -> None:
-        self._approved = description
+        # Replaces any earlier approval (never stacks) and restarts the expiry window.
+        self._approved = (description, self._clock() + self.approval_ttl)
 
     def _gate_or_run(self, call: ToolCall) -> None:
         """Raise Gated for a risky action unless it is the exact approved one."""
         d = self._describe(call)
         if not is_gated(d):
             return
-        approved, self._approved = self._approved, None  # one-shot, consumed either way
-        if approved is not None and binding(approved) == binding(d):
-            self.executed.append(d)
-            return
+        # Only the next MATCHING action consumes the approval. A different gated action
+        # raises Gated and leaves it; it still expires on its own, and navigation, tab
+        # change and halt() clear it. Nothing the model passes can approve anything.
+        if self.approval_open:
+            approved, _ = self._approved  # type: ignore[misc]
+            if binding(approved) == binding(d):
+                self._approved = None
+                self.executed.append(d)
+                return
         raise Gated(d)
 
     # ---- call plumbing: record, serialize, halt --------------------------

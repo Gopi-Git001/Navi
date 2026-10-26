@@ -14,7 +14,14 @@ Run: `python -m pytest` (needs `requirements-dev.txt`).
 
 `browser/` never decides approval. For any call whose described risk is not `none` it raises `Gated(description)` **instead of acting**. The gate (`agent/safety.py`, Agent Brain) reads it back, waits for the spoken "confirm", then calls `approve(description)` and re-issues the held call itself, once.
 
-- `approve()` is one-shot and bound to the exact `risk`, `verb`, `target` (which includes the target ref, e.g. the post URL) and `text`. If the composer text or target differ when the call runs, the browser refuses and raises `Gated` again with the new description (decision 20). Navigation, tab change, history, and `halt()` clear it.
+- **`target` format:** always `"<page url> | <element ref>"`, optionally followed by `" | <label>"`, e.g. `https://x.test/post/123 | composer ref 14 | reply to @alice's post`. A send button reports the ref of the composer it sends. Different posts (different URL) or different composers on one page (different ref) never share a target. The gate may split on `" | "`; the URL is not meant to be spoken.
+- **`approve()` rules:** it is bound to the exact `risk`, `verb`, `target` and `text`.
+  - Consumed only by the next matching action; then the same action is gated again until a fresh approve.
+  - Approving twice replaces the earlier approval; it never stacks two uses.
+  - A different or changed action (other target, edited composer text, other key) raises `Gated` with the new description and leaves the approval alone (decision 20: refused and re-read).
+  - An unused approval expires after 30 s (`approval_ttl`, injectable clock in the fake; the real browser takes the same arguments).
+  - Navigation, tab change, history and `halt()` clear it.
+  - Only `approve()` approves. The contract has no `confirmed` argument, so passing one to any tool is a `TypeError` and never approves. The dispatcher must not forward such an argument.
 - `ActionDescription.readback` is left empty by the browser; the gate fills it in.
 - Every result is a `ToolResult` whose `text` starts with the status word and carries the updated page state (title, URL, numbered elements).
 
@@ -65,7 +72,7 @@ The browser supplies facts, never rules. For every possibly risky action `descri
 2. the element's role and its accessible name from several sources (aria-label, label, text, title, placeholder), because many X controls are icon-only;
 3. whether it sits inside a dialog or composer, and whether that composer has non-empty editable content;
 4. the exact composer text or field values that will be sent (read back from the page after typing);
-5. the target: which post, person or recipient is being replied to, with a stable ref (post URL or id);
+5. the target: page URL plus a stable element ref (and a label such as which post or recipient), in the `target` format above;
 6. the button or key that will actually fire;
 7. the focused element, and whether it is sensitive;
 8. whether it is in an iframe, and the form's action and method for form submits;

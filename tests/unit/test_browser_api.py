@@ -139,7 +139,7 @@ def x_page() -> FakePage:
     """A mock-X-like page: post with a Reply icon that opens a composer, a menu, a sensitive login."""
     reply_box = FakeElement(
         name="Post text", role="textbox", key="composer", editable=True, in_dialog=True,
-        risk="comment", target="reply to @alice's post", target_ref="https://x.test/alice/status/1",
+        risk="comment", target="reply to @alice's post", ref="composer ref 14",
     )
     post_btn = FakeElement(
         name="Reply", key="send", in_dialog=True, risk="comment", verb="click Reply button",
@@ -151,7 +151,7 @@ def x_page() -> FakePage:
             FakeElement(name="Reply", key="open_reply", reveals=[reply_box, post_btn]),
             FakeElement(name="More", key="more", reveals=[
                 FakeElement(name="Delete", role="menuitem", key="delete", risk="delete",
-                            target="your post", target_ref="https://x.test/me/status/9"),
+                            target="your post", ref="menuitem ref 3"),
             ]),
             FakeElement(name="Password", role="textbox", key="pw", editable=True, sensitive=True, value="hunter2"),
             FakeElement(name="Card number", role="textbox", key="card", editable=True, sensitive=True),
@@ -272,7 +272,7 @@ async def test_risky_click_raises_gated_with_full_description(fb):
     with pytest.raises(Gated) as ei:
         await fb.click(fb.element_id("send"))
     assert_full(ei.value.description, "comment", "Reply", "alice's post", "great post")
-    assert "https://x.test/alice/status/1" in ei.value.description.target
+    assert ei.value.description.target.startswith("https://x.test/alice/status/1 | composer ref 14")
     assert fb.executed == []
     assert fb.calls[-1].outcome == "gated"
 
@@ -368,7 +368,7 @@ async def test_approval_refused_if_target_changed(fb):
     cid = fb.element_id("send")
     d = await fb.describe_pending_action(ToolCall("click", {"element_id": cid}))
     await fb.approve(d)
-    fb.page.elements[fb.element_id("composer") - 1].target_ref = "https://x.test/mallory/status/2"
+    fb.page.elements[fb.element_id("composer") - 1].ref = "composer ref 99"
     with pytest.raises(Gated):
         await fb.click(cid)
     assert fb.executed == []
@@ -490,4 +490,217 @@ async def test_halt_during_gated_flow_never_executes_the_held_action(fb):
     with pytest.raises(Gated):
         await fb.click(fb.element_id("send"))
     await fb.halt()
+    assert fb.executed == []
+
+
+# ---------------------------------------------------------------- approve(): one-shot, bound, expiring
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def timed_browser(ttl: float = 30.0) -> tuple[FakeBrowser, FakeClock]:
+    clock = FakeClock()
+    return FakeBrowser(x_page(), clock=clock, approval_ttl=ttl), clock
+
+
+async def held_send(fb: FakeBrowser) -> tuple[int, ActionDescription]:
+    await open_composer(fb)
+    cid = fb.element_id("send")
+    return cid, await fb.describe_pending_action(ToolCall("click", {"element_id": cid}))
+
+
+async def test_approve_twice_same_description_still_runs_only_once(fb):
+    cid, d = await held_send(fb)
+    await fb.approve(d)
+    await fb.approve(d)  # approving again must not stack a second use
+    assert (await fb.click(cid)).status == "ok"
+    with pytest.raises(Gated):
+        await fb.click(cid)
+    assert len(fb.executed) == 1
+
+
+async def test_second_matching_action_after_consumption_needs_fresh_approval(fb):
+    cid, d = await held_send(fb)
+    await fb.approve(d)
+    await fb.click(cid)
+    with pytest.raises(Gated):
+        await fb.click(cid)
+    await fb.approve(d)  # a fresh approval works again, once
+    assert (await fb.click(cid)).status == "ok"
+    assert len(fb.executed) == 2
+
+
+async def test_approve_then_target_changed_is_refused_and_described_anew(fb):
+    cid, d = await held_send(fb)
+    await fb.approve(d)
+    fb.page.elements[fb.element_id("composer") - 1].ref = "composer ref 99"
+    with pytest.raises(Gated) as ei:
+        await fb.click(cid)
+    assert ei.value.description.target != d.target
+    assert "composer ref 99" in ei.value.description.target
+    assert fb.executed == []
+
+
+async def test_unmatched_action_does_not_consume_the_approval(fb):
+    """Only the next MATCHING action consumes it: a different gated action raises and leaves it."""
+    cid, d = await held_send(fb)
+    await fb.approve(d)
+    with pytest.raises(Gated):
+        await fb.press_key("Enter")  # different verb: not what was approved
+    assert fb.executed == []
+    assert (await fb.click(cid)).status == "ok"  # the approved one still runs, once
+    assert len(fb.executed) == 1
+
+
+async def test_harmless_actions_do_not_consume_the_approval(fb):
+    cid, d = await held_send(fb)
+    await fb.approve(d)
+    await fb.scroll("down")
+    await fb.observe()
+    await fb.hover(cid)
+    assert (await fb.click(cid)).status == "ok"
+    assert len(fb.executed) == 1
+
+
+async def test_unused_approval_expires_after_30s_by_default():
+    fb = FakeBrowser(x_page())
+    assert fb.approval_ttl == 30.0
+    fb, clock = timed_browser()  # default 30 s, fake clock, no real sleeping
+    cid, d = await held_send(fb)
+    await fb.approve(d)
+    clock.now += 29.9
+    assert fb.approval_open
+    clock.now += 0.2  # 30.1 s after approve
+    assert not fb.approval_open
+    with pytest.raises(Gated):
+        await fb.click(cid)
+    assert fb.executed == []
+
+
+async def test_approval_still_valid_just_before_expiry():
+    fb, clock = timed_browser()
+    cid, d = await held_send(fb)
+    await fb.approve(d)
+    clock.now += 29.9
+    assert (await fb.click(cid)).status == "ok"
+
+
+async def test_expiry_is_injectable_and_a_new_approve_restarts_the_window():
+    fb, clock = timed_browser(ttl=5.0)
+    cid, d = await held_send(fb)
+    await fb.approve(d)
+    clock.now += 4
+    await fb.approve(d)  # restart
+    clock.now += 4  # 8 s after first, 4 s after second
+    assert (await fb.click(cid)).status == "ok"
+    await fb.approve(d)
+    clock.now += 5
+    with pytest.raises(Gated):
+        await fb.click(cid)
+
+
+async def test_expired_approval_is_gone_even_if_page_returns_to_the_same_state():
+    fb, clock = timed_browser()
+    cid, d = await held_send(fb)
+    await fb.approve(d)
+    clock.now += 31
+    with pytest.raises(Gated):
+        await fb.click(cid)
+    clock.now += 0  # a second attempt later also stays gated (not revived)
+    with pytest.raises(Gated):
+        await fb.click(cid)
+
+
+async def test_model_confirmed_flag_never_approves(fb, contract):
+    """No contract tool has a `confirmed` argument; passing one is rejected and approves nothing."""
+    for tool in contract["tools"]:
+        assert "confirmed" not in tool["parameters"]["properties"]
+    cid, d = await held_send(fb)
+    with pytest.raises(TypeError):
+        await fb.click(cid, confirmed=True)
+    with pytest.raises(TypeError):
+        await fb.press_key("Enter", confirmed=True)
+    with pytest.raises(TypeError):
+        await fb.type_text(fb.element_id("composer"), "x", press_enter=True, confirmed=True)
+    assert fb.executed == []
+    # even smuggled inside a ToolCall for description, it neither approves nor changes the description
+    with_flag = await fb.describe_pending_action(ToolCall("click", {"element_id": cid, "confirmed": True}))
+    assert with_flag == d and is_gated(with_flag)
+    with pytest.raises(Gated):
+        await fb.click(cid)
+    assert fb.executed == []
+
+
+# ---------------------------------------------------------------- target identifies the post uniquely
+
+def two_post_timeline() -> FakePage:
+    """One timeline page with two posts, each with its own reply composer and send button."""
+    def post(n: int, author: str) -> list[FakeElement]:
+        return [
+            FakeElement(name="Post text", role="textbox", key=f"composer{n}", editable=True, risk="comment",
+                        target=f"reply to @{author}'s post", ref=f"composer ref {n}", value=f"reply {n}"),
+            FakeElement(name="Reply", key=f"send{n}", risk="comment", verb="click Reply button", controls=f"composer{n}"),
+        ]
+    return FakePage(url="https://x.test/home", title="Home", elements=post(1, "alice") + post(2, "bob"))
+
+
+async def test_target_always_has_page_url_and_element_ref(fb):
+    await open_composer(fb)
+    for call in (ToolCall("click", {"element_id": fb.element_id("send")}),):
+        d = await fb.describe_pending_action(call)
+        assert d.target.startswith("https://x.test/alice/status/1 | composer ref 14")
+    await fb.click(fb.element_id("composer"))
+    with pytest.raises(Gated) as ei:
+        await fb.press_key("Ctrl+Enter")
+    assert ei.value.description.target.startswith("https://x.test/alice/status/1 | composer ref 14")
+    await fb.click(fb.element_id("more"))
+    with pytest.raises(Gated) as ei:
+        await fb.click(fb.element_id("delete"))
+    assert ei.value.description.target.startswith("https://x.test/alice/status/1 | menuitem ref 3")
+
+
+async def test_element_without_scripted_ref_still_gets_a_ref():
+    page = FakePage(url="https://x.test/p/5", elements=[FakeElement(name="Send DM", key="dm", risk="dm")])
+    fb = FakeBrowser(page)
+    d = await fb.describe_pending_action(ToolCall("click", {"element_id": 1}))
+    assert d.target.startswith("https://x.test/p/5 | ") and "dm ref" in d.target
+
+
+async def test_two_composers_on_one_page_have_different_targets_and_approvals_do_not_cross():
+    fb = FakeBrowser(two_post_timeline())
+    d1 = await fb.describe_pending_action(ToolCall("click", {"element_id": fb.element_id("send1")}))
+    d2 = await fb.describe_pending_action(ToolCall("click", {"element_id": fb.element_id("send2")}))
+    assert d1.target != d2.target
+    assert "composer ref 1" in d1.target and "composer ref 2" in d2.target
+    await fb.approve(d1)
+    with pytest.raises(Gated):
+        await fb.click(fb.element_id("send2"))  # approval for post 1 is refused for post 2
+    assert fb.executed == []
+    assert (await fb.click(fb.element_id("send1"))).status == "ok"
+    assert [e.target for e in fb.executed] == [d1.target]
+
+
+async def test_same_ref_on_two_different_post_pages_has_different_targets():
+    def page(url: str) -> FakePage:
+        return FakePage(url=url, elements=[
+            FakeElement(name="Post text", role="textbox", key="composer", editable=True, risk="comment",
+                        ref="composer ref 14", value="same text"),
+            FakeElement(name="Reply", key="send", risk="comment", controls="composer"),
+        ])
+    fb = FakeBrowser(page("https://x.test/post/123"))
+    fb.pages["https://x.test/post/456"] = page("https://x.test/post/456")
+    d123 = await fb.describe_pending_action(ToolCall("click", {"element_id": 2}))
+    assert d123.target == "https://x.test/post/123 | composer ref 14"
+    await fb.approve(d123)
+    await fb.navigate("https://x.test/post/456")  # navigation clears it anyway
+    d456 = await fb.describe_pending_action(ToolCall("click", {"element_id": 2}))
+    assert d456.target == "https://x.test/post/456 | composer ref 14" != d123.target
+    await fb.approve(d123)  # re-approve the OLD description while on the other post
+    with pytest.raises(Gated):
+        await fb.click(2)
     assert fb.executed == []
