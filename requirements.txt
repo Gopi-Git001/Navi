@@ -1,0 +1,7 @@
+playwright>=1.45
+websockets>=13.0
+openai>=1.60
+python-dotenv>=1.0
+sounddevice>=0.4.6
+numpy>=1.26
+pynput>=1.7.7
