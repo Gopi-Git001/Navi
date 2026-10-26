@@ -1,6 +1,6 @@
 # Decisions
 
-Owner: Navi Architect. Every entry is binding on all bots until Gopi changes it. Entries 1-6, 15-17 and 21 are Gopi's; entries 7-14 and 18-20 are the Architect's (7-14 approved by Gopi on 2026-10-25) and Gopi can overturn any of them.
+Owner: Navi Architect. Every entry is binding on all bots until Gopi changes it. Entries 1-6, 15-17 and 21 are Gopi's; entries 7-14 and 18-20 are the Architect's (7-14 approved by Gopi on 2026-10-25) and Gopi can overturn any of them. Gopi approved the tool contract as drafted on 2026-10-25, so decision 13 stands.
 
 | # | Date | Decision | By |
 |---|---|---|---|

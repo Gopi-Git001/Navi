@@ -52,4 +52,4 @@ Goal: Navi can comment on X, only after the spoken word "confirm".
 After M5 I send Gopi what changed and exactly what to test on his laptop.
 
 ## Gopi's answers
-See `docs/DECISIONS.md` entries 15-17 and the approvals recorded there. Still open: whether `extract_data` results are also saved as CSV (decision 13), and the name to use in the handoff skill and README.
+See `docs/DECISIONS.md` entries 15-17 and the approvals recorded there. Tool contract approved as drafted (spoken only, no CSV). Name to use everywhere, including handoff skill and README: Gopi.

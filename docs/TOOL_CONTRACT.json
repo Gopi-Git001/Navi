@@ -1,6 +1,6 @@
 {
-  "version": "1.0-draft",
-  "status": "DRAFT. Not the contract until Gopi approves. After approval only the Architect changes it, after telling Gopi.",
+  "version": "1.0",
+  "status": "APPROVED by Gopi on 2026-10-25 (extract_data and deep_research are spoken only, no files). Only the Architect changes it, after telling Gopi.",
   "changes_from_reference": {
     "removed": [
       "scrape_tables",
