@@ -1,6 +1,6 @@
 # Milestone Plan
 
-Owner: Navi Architect. For Gopi's approval. **No one codes until Gopi approves this plan.** After approval I create one GitHub Issue per task below (goal, done = named tests or benchmarks, don't-touch list, one owner) and nothing merges to `main` without passing tests and Navi Reviewer approval.
+Owner: Navi Architect. **APPROVED by Gopi on 2026-10-25, with one edit: a laptop checkpoint at the end of M2.** After approval I create one GitHub Issue per task below (goal, done = named tests or benchmarks, don't-touch list, one owner) and nothing merges to `main` without passing tests and Navi Reviewer approval.
 
 Rule inside every milestone: Navi QA's tests and benchmark checks for that milestone land first, then features make them pass.
 
@@ -27,7 +27,7 @@ Goal: Navi controls Chrome from voice on local pages, with no risky actions yet.
 - QA: tests for D6, A5, A6, A7, A10, B2, C9, C10, and the mock-page suites.
 - Browser: Chrome in dedicated profile, snapshot, screenshots, cursor, all browser tools in the contract, `halt()`, sensitive-field refusal.
 - Brain: dispatcher with the contract tools, cancellable tool task, prompt v1.
-- **Done when:** the listed rows pass; D1 ≥ 95% on the non-risky half of `COMMAND_SCRIPT.csv`.
+- **Done when:** the listed rows pass; D1 ≥ 95% on the non-risky half of `COMMAND_SCRIPT.csv`. **Checkpoint:** Gopi tests Navi controlling Chrome on his own machine before M3 starts. M3 does not begin until he says so.
 
 ## M3. Safe actions and X comment (checkpoint with Gopi)
 Goal: Navi can comment on X, only after the spoken word "confirm".
@@ -51,11 +51,5 @@ Goal: Navi can comment on X, only after the spoken word "confirm".
 ## Final summary
 After M5 I send Gopi what changed and exactly what to test on his laptop.
 
-## Decisions I need from Gopi
-1. Approve this plan.
-2. Approve the tool contract draft (`docs/TOOL_CONTRACT.json`): it removes `scrape_tables`, `scrape_links`, and the `confirmed` argument, and makes scrape and research results spoken only (no files).
-3. Approve the Architect decisions 7-14 in `docs/DECISIONS.md`, especially "confirm" must be the whole utterance, and the 30 s window.
-4. Approve dev dependencies: `pytest`, `pytest-asyncio`, and a WAV resampler (`soundfile` or `scipy`).
-5. Hide Chrome's automation flag or not.
-6. Who is Revanth in the handoff skill (the name appears in the reference examples too)?
-7. QA's open items for you: speakers and accent groups, and how QA's branch gets onto GitHub.
+## Gopi's answers
+See `docs/DECISIONS.md` entries 15-17 and the approvals recorded there. Still open: whether `extract_data` results are also saved as CSV (decision 13), and the name to use in the handoff skill and README.

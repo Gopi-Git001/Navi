@@ -1,6 +1,6 @@
 # Decisions
 
-Owner: Navi Architect. Every entry is binding on all bots until Gopi changes it. Entries 1-6 are Gopi's; entries 7-14 are the Architect's and Gopi can overturn any of them.
+Owner: Navi Architect. Every entry is binding on all bots until Gopi changes it. Entries 1-6 and 15-17 are Gopi's; entries 7-14 and 18-20 are the Architect's (7-14 approved by Gopi on 2026-10-25) and Gopi can overturn any of them.
 
 | # | Date | Decision | By |
 |---|---|---|---|
@@ -17,7 +17,13 @@ Owner: Navi Architect. Every entry is binding on all bots until Gopi changes it.
 | 11 | 2026-10-25 | **Stop is a control event, not a tool.** Ctrl+Shift+Space works in every mode, even with the mic muted: flush speaker, cancel the model reply, cancel the running tool task, halt the browser, clear any held confirm. Push-to-talk key-down also interrupts. | Architect |
 | 12 | 2026-10-25 | **Push-to-talk key default:** Right Ctrl (`ctrl_r`), as in the reference, configurable through `PTT_KEY`. | Architect |
 | 13 | 2026-10-25 | **No files for v1.** The product plan puts saving scrape or research output to files out of scope. Scrape and research results are spoken (and shown in the console). The reference's CSV/JSON writing and `scrape_tables`/`scrape_links` tools are cut. | Architect |
-| 14 | 2026-10-25 | **Browser is Chrome** (`BROWSER_CHANNEL=chrome`) in its own persistent profile folder (`.browser_profile/`, git-ignored), not Edge as in the reference. The reference launch flag `--disable-blink-features=AutomationControlled` is removed until Gopi decides whether Navi should hide that it is automated (see open question in `docs/TECH_SPEC.md`). | Architect |
+| 14 | 2026-10-25 | **Browser is Chrome** (`BROWSER_CHANNEL=chrome`) in its own persistent profile folder (`.browser_profile/`, git-ignored), not Edge as in the reference. The reference launch flag `--disable-blink-features=AutomationControlled` is removed; Gopi confirmed Navi does not hide that it is automated (decision 16). | Architect |
+| 15 | 2026-10-25 | Dev dependencies approved: `pytest`, `pytest-asyncio`, `soundfile`. **Not** `scipy`. Nothing else without asking Gopi. | Gopi |
+| 16 | 2026-10-25 | **Do not hide that Chrome is automated.** If a site challenges Navi (CAPTCHA, bot check), Navi stops and asks Gopi to handle it. | Gopi |
+| 17 | 2026-10-25 | A pre-recorded acknowledgement ("On it") is approved **only as a fallback** if 700 ms cannot be met with the model's own first word. QA reports time to the model's first real word separately. **Real X limit: at most 10 comments per hour and 30 per day, enforced in code** (`agent/safety.py`, counter kept in a git-ignored local state file, survives restarts; the 11th is refused with a spoken reason). | Gopi |
+| 18 | 2026-10-25 | **Confirm comes only from a push-to-talk turn.** The gate receives the final transcript of a push-to-talk turn plus a flag saying whether Navi was speaking while it was captured; never text from the model or from an always-listening turn. In always-listening mode the user holds the push-to-talk key to say "confirm". Stop wins over a held key: Ctrl+Shift+Space while Right Ctrl is held cancels the recording and acts as stop. | Architect |
+| 19 | 2026-10-25 | **Research and page-derived text never reaches the tool-holding model as instructions.** `notify` carries only fixed text built by our code ("Research finished, N sources"). The spoken summary is played as a separate no-tools response labeled as quoted web content; follow-up questions give the model the report as quoted data. Background updates cannot trigger any gated tool. | Architect |
+| 20 | 2026-10-25 | **The gate is bound to the held action.** The gate stores the exact target and text from `describe_pending_action`. If the composer text or target differs at execution time, the action is refused and re-read. Opening a reply box is not gated; sending it is. | Architect |
 
 ## Changing a decision
 Only Gopi can change 1-6. The Architect changes 7-14 after telling Gopi. Add a new row; never edit an old one.

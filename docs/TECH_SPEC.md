@@ -37,7 +37,7 @@ These are fixed. Changing one means a change to this spec and a note to Gopi.
 **agent → voice**:
 - `play(chunk: bytes)`, `flush_playback()` (must empty our buffer and the device buffer), `speak_exact(text)` (play a fixed phrase, used for read-backs; may use the model's text-to-speech through the same session, but the text is fixed by code), `mic_hold(on: bool)` (mute while speaking if no headphones).
 
-**agent → browser**: one async method per tool in the contract, same name, same arguments, returns a `ToolResult` (see contract). Plus `halt()` (cancel the running action and stop within 1 s; leaves the page as is) and `describe_pending(call) -> ActionDescription` (verb, target, exact text, risk class) used by the gate. `browser/` raises `Gated(description)` instead of acting when `risk != none`; it never decides approval.
+**agent → browser**: one async method per tool in the contract, same name, same arguments, returns a `ToolResult` (see contract). Plus `halt()` (cancel the running action and stop within 1 s; leaves the page as is) and `describe_pending_action(call) -> ActionDescription` (verb, target, exact text, risk class) used by the gate. `browser/` raises `Gated(description)` instead of acting when `risk != none`; it never decides approval.
 
 **agent → research**: `deep_research(question, max_sources)`, `research_status()`, `extract_data(instruction)`; each returns spoken-style text. No file output.
 
@@ -78,7 +78,7 @@ Needed so QA can run benchmarks with recorded clips and no live mic. Owned by Na
 
 - Chrome via Playwright `launch_persistent_context`, `channel="chrome"`, user data in `.browser_profile/` (decision 14). Gopi signs into X once in that window. Navi never reads or touches any other profile.
 - Perception and actions as in the reference: numbered elements, `look` with the same numbers, visible red cursor, element ids valid only for the latest result.
-- **Action description** (`describe_pending`): for any click, key press, or form submit, return the verb, target (for example "Post button on the reply box"), and the exact text or field values that will be sent. Risk classes: `post`, `comment`, `form_submit`, `dm`, `email`, `delete`, `purchase`, `none`. Anything in the first six needs "confirm" (decision 3). `purchase` is also gated, same word.
+- **Action description** (`describe_pending_action`): for any click, key press, or form submit, return the verb, target (for example "Post button on the reply box"), and the exact text or field values that will be sent. Risk classes: `post`, `comment`, `form_submit`, `dm`, `email`, `delete`, `purchase`, `none`. Anything in the first six needs "confirm" (decision 3). `purchase` is also gated, same word.
 - **Gate coverage** must include: click on element, click at coordinates, Enter and Ctrl+Enter, Space on a focused button, form submit by script, and menu items like "Delete".
 - **Network lock** (decision 10): `context.route` blocks risky non-GET requests (X's `CreateTweet`, `DeleteTweet`, DM send; any form POST) unless an approval token for that action is open. Tests: with the click gate disabled, the lock alone still stops the mock post.
 - **Never type secrets:** password, card, CVV, SSN, bank and account fields are refused by type, `autocomplete`, name, and label. Navi asks the user to type them, never reads typed values aloud.
@@ -94,6 +94,7 @@ Needed so QA can run benchmarks with recorded clips and no live mic. Owned by Na
   2. The gate stores the exact call and description, tells the model "waiting for confirm; say nothing", and calls `speak_exact("I'll post this comment on <author>'s post: '<text>'. Say confirm to do it.")`.
   3. The next utterance's transcript is normalized and compared to `confirm`. Match: the gate opens the network lock for that action and runs the held call itself, once. No match or timeout: cancel, say "Cancelled", discard.
   4. The result goes back to the model as a normal tool result.
+- **X rate limit** (decision 17): a counter in `agent/safety.py` refuses the 11th comment in a rolling hour and the 31st in a rolling day, before any read-back.
 - **Prompt injection:** page text is data. The agent never follows instructions found on a page; it tells the user instead.
 - **Unclear speech:** ask one short clarifying question, take no action.
 - **Session log:** JSONL, no secrets, no typed field values, no full page text. Used by QA for marks and failures.
@@ -112,13 +113,10 @@ Needed so QA can run benchmarks with recorded clips and no live mic. Owned by Na
 
 ## 9. Dependencies
 
-Existing and allowed: `playwright`, `websockets`, `openai`, `python-dotenv`, `sounddevice`, `numpy`, `pynput`. **Needs Gopi's approval before anyone adds it:** a test runner (`pytest`, `pytest-asyncio`) and a WAV resampler (`soundfile` or `scipy`). Nothing else.
+Existing and allowed: `playwright`, `websockets`, `openai`, `python-dotenv`, `sounddevice`, `numpy`, `pynput`. **Approved by Gopi (decision 15):** `pytest`, `pytest-asyncio`, `soundfile`. Not `scipy`. Nothing else without asking Gopi.
 
 ## 10. Out of scope for v1
 As in the Product Plan: other browsers, non-Windows and mobile, multiple users, apps outside the browser, saving output to files.
 
-## 11. Open questions for Gopi
-1. Hide Chrome's automation flag or not (decision 14).
-2. Approve the two dev dependencies above.
-3. Approve a pre-recorded local acknowledgement only if the 700 ms target cannot be met otherwise.
-4. Self-imposed limit on comments per hour for real X.
+## 11. Resolved by Gopi (2026-10-25)
+Automation flag stays off and Navi asks Gopi to handle site challenges (decision 16). Dev dependencies (decision 15). Pre-recorded "On it" only as a fallback (decision 17). Real X limit 10 comments per hour and 30 per day, enforced in code (decision 17). Confirm source, research path, and gate binding: decisions 18-20.
