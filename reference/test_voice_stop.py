@@ -9,9 +9,20 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import functools
+
 import pytest
 
+from safety import ConfirmationGate
 from voice import StopHotkey, VoiceSession
+
+
+def aio(fn):
+    """Run an async test on its own event loop, so no pytest-asyncio setting is needed."""
+    @functools.wraps(fn)
+    def run(*a, **k):
+        return asyncio.run(fn(*a, **k))
+    return run
 
 
 # ------------------------------------------------------------------ helpers
@@ -141,6 +152,7 @@ def test_right_ctrl_held_for_push_to_talk_still_completes_the_chord():
 
 
 # ------------------------------------------------------------------ stop_everything
+@aio
 async def test_stop_with_nothing_running_is_safe_and_repeatable():
     s = make_session()
     s.stop_everything()
@@ -150,6 +162,7 @@ async def test_stop_with_nothing_running_is_safe_and_repeatable():
     assert "response.cancel" not in s.ws.types()
 
 
+@aio
 async def test_stop_cancels_the_reply_and_flushes_audio():
     s = make_session()
     s.response_active = True
@@ -163,6 +176,7 @@ async def test_stop_cancels_the_reply_and_flushes_audio():
     assert s.response_wanted is False
 
 
+@aio
 async def test_stop_cancels_the_running_action_and_does_not_start_a_new_reply():
     reg = SlowRegistry()
     s = make_session(reg)
@@ -173,12 +187,13 @@ async def test_stop_cancels_the_running_action_and_does_not_start_a_new_reply():
     assert reg.finished == 0, "the action must not run to completion"
     assert reg.calls == ["click"], "the second call in the chain must not start"
     outs = outputs(s)
-    assert len(outs) == 2 and outs[0].startswith("Stopped by the user")
+    assert len(outs) == 2 and outs[0].startswith("STOPPED_BY_USER") and "partly run" in outs[0] and "observe" in outs[0]
     assert outs[1].startswith("Cancelled")
     assert "response.create" not in s.ws.types(), "stop must not trigger a new reply"
     assert s.action_task is None
 
 
+@aio
 async def test_stop_while_ptt_is_held_discards_the_recording():
     s = make_session()
     s._ptt_down()
@@ -193,6 +208,7 @@ async def test_stop_while_ptt_is_held_discards_the_recording():
     assert "response.create" not in types
 
 
+@aio
 async def test_new_command_after_stop_works_normally():
     reg = SlowRegistry()
     s = make_session(reg)
@@ -209,6 +225,7 @@ async def test_new_command_after_stop_works_normally():
     assert outputs(s)[-1] == "ok"
 
 
+@aio
 async def test_cancelling_the_whole_session_is_not_mistaken_for_a_stop():
     reg = SlowRegistry()
     s = make_session(reg)
@@ -217,3 +234,47 @@ async def test_cancelling_the_whole_session_is_not_mistaken_for_a_stop():
     chain.cancel()
     with pytest.raises(asyncio.CancelledError):
         await chain
+
+
+# ------------------------------------------------------------------ confirm hold (real gate)
+RISKY_BUTTON = {"label": "Post", "isSubmit": False}
+
+
+def make_session_with_gate():
+    s = make_session()
+    s.gate = ConfirmationGate()
+    return s
+
+
+@aio
+async def test_stop_clears_a_pending_confirmation_and_a_heard_confirm():
+    """Reviewer's repro: ask, user says confirm, stop, retry with confirmed=true -> must be gated again."""
+    s = make_session_with_gate()
+    g = s.gate
+    first = await g.check("post", RISKY_BUTTON, confirmed=False)
+    assert first.startswith("CONFIRMATION_REQUIRED")
+    g.note_user("confirm")
+    g.note_user("yes")   # also covers the older word list
+    s.stop_everything()
+    assert g.pending == {} and g._last_affirm == 0.0
+    retry = await asyncio.wait_for(g.check("post", RISKY_BUTTON, confirmed=True), 6)
+    assert retry.startswith("CONFIRMATION_REQUIRED"), "stop must not leave an approval behind"
+
+
+@aio
+async def test_a_fresh_ask_and_confirm_after_stop_still_works():
+    s = make_session_with_gate()
+    g = s.gate
+    await g.check("post", RISKY_BUTTON, confirmed=False)
+    s.stop_everything()
+    assert (await g.check("post", RISKY_BUTTON, confirmed=False)).startswith("CONFIRMATION_REQUIRED")
+    g.note_user("confirm")
+    g.note_user("yes")
+    assert await g.check("post", RISKY_BUTTON, confirmed=True) is None
+
+
+@aio
+async def test_stop_with_no_gate_does_not_crash():
+    s = make_session()
+    s.gate = None
+    s.stop_everything()

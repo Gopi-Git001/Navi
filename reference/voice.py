@@ -317,9 +317,22 @@ class VoiceSession:
         if self.action_task and not self.action_task.done():
             self.action_stopped = True
             self.action_task.cancel()
+        self._clear_confirm_hold()
         if self.ws is not None:
             asyncio.ensure_future(self.send({"type": "input_audio_buffer.clear"}))
         log("sys", "STOPPED")
+
+    def _clear_confirm_hold(self):
+        """Stop means stop: a confirmation asked for earlier, or a "confirm" already heard, must not
+        carry over to a later retry. The next risky action has to be asked for and confirmed again."""
+        g = self.gate
+        if g is None:
+            return
+        try:
+            g.pending.clear()
+            g._last_affirm = 0.0
+        except AttributeError:
+            pass
 
     def _ptt_down(self):
         if self.muted:
@@ -492,7 +505,8 @@ class VoiceSession:
                 if not self.action_stopped:
                     raise  # the whole session was cancelled, not just this action
                 log("  ->", "stopped by user")
-                await self._output(call_id, "Stopped by the user. Do not continue this action.")
+                await self._output(call_id, "STOPPED_BY_USER: the user pressed stop. This action may have partly run. Do not continue or retry it. "
+                                         "Look at the page (observe) to see what actually happened before doing anything else.")
                 continue
             finally:
                 self.action_task = None
