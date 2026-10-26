@@ -68,7 +68,11 @@ async def main():
     assert r.startswith("CONFIRMATION_REQUIRED"), r
     r = (await reg.call("click", {"element_id": order, "confirmed": True})).text
     assert r.startswith("CONFIRMATION_REQUIRED"), "model self-confirm must not pass: " + r[:80]
-    gate.note_user("yes, place it")
+    for nope in ("yes", "yes, place it", "okay", "go ahead", "sure", "do it", "please confirm it", "I do not confirm"):
+        gate.note_user(nope)
+        r = (await reg.call("click", {"element_id": order, "confirmed": True})).text
+        assert r.startswith("CONFIRMATION_REQUIRED"), f"{nope!r} must not approve: " + r[:80]
+    gate.note_user("Confirm.")
     r = (await reg.call("click", {"element_id": order, "confirmed": True})).text
     assert r.startswith("Clicked"), r
     assert "SUBMITTED Revanth" in (await b.read_page("full")), "form not submitted"
