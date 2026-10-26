@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import posixpath
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Optional
@@ -14,6 +16,60 @@ DEFAULT_DOTENV = ROOT / ".env"
 
 class ConfigError(RuntimeError):
     """Configuration is unusable. The message never contains secret values."""
+
+
+# Chrome's everyday user-data dirs, as lowercase path segments. A PROFILE_DIR that contains
+# one of these runs anywhere in its path is refused (Windows, Linux, macOS; backslashes ok).
+_EVERYDAY_CHROME = (
+    ("google", "chrome", "user data"),                  # %LOCALAPPDATA%/Google/Chrome/User Data
+    (".config", "google-chrome"),                       # Linux
+    (".config", "chromium"),                            # Linux
+    ("application support", "google", "chrome"),        # macOS
+)
+_WIN_ABS = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+
+
+def _expand_percent(raw: str, env: Mapping[str, str]) -> str:
+    def sub(m: "re.Match[str]") -> str:
+        return env.get(m.group(1)) or os.environ.get(m.group(1)) or m.group(0)
+
+    return re.sub(r"%([A-Za-z0-9_]+)%", sub, raw)
+
+
+def _segments(raw: str) -> list[str]:
+    norm = posixpath.normpath(raw.replace("\\", "/")).casefold()
+    return [seg for seg in norm.split("/") if seg and seg != "."]
+
+
+def _is_everyday_chrome(*candidates: str) -> bool:
+    for raw in candidates:
+        segs = _segments(raw)
+        for pattern in _EVERYDAY_CHROME:
+            n = len(pattern)
+            if any(tuple(segs[i:i + n]) == pattern for i in range(len(segs) - n + 1)):
+                return True
+    return False
+
+
+def _resolve_profile_dir(raw: str, env: Mapping[str, str]) -> Path:
+    """Relative paths resolve against the repo root (never the cwd). Refuses everyday Chrome."""
+    expanded = _expand_percent(raw, env)
+    candidates = [raw, expanded]
+    if _WIN_ABS.match(expanded):
+        path = Path(expanded)  # a Windows absolute path, kept as given
+    else:
+        path = Path(os.path.expanduser(expanded))
+        if not path.is_absolute():
+            path = ROOT / path
+        path = Path(os.path.normpath(path))
+        candidates += [str(path), str(path.resolve())]  # resolve() follows symlinks
+    if _is_everyday_chrome(*candidates):
+        raise ConfigError(
+            "PROFILE_DIR points at Chrome's everyday profile. Navi only uses its own "
+            "dedicated profile folder (default: .browser_profile/ in the repo). "
+            "Pick another folder or remove PROFILE_DIR."
+        )
+    return path
 
 
 def _get(env: Mapping[str, str], name: str, default: str) -> str:
@@ -59,6 +115,6 @@ class Config:
             voice=_get(env, "VOICE", "marin"),
             ptt_key=_get(env, "PTT_KEY", "ctrl_r"),
             browser_channel=_get(env, "BROWSER_CHANNEL", "chrome"),
-            profile_dir=Path(_get(env, "PROFILE_DIR", str(ROOT / ".browser_profile"))),
+            profile_dir=_resolve_profile_dir(_get(env, "PROFILE_DIR", str(ROOT / ".browser_profile")), env),
             start_url=_get(env, "START_URL", "https://www.google.com"),
         )

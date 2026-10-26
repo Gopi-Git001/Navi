@@ -116,3 +116,49 @@ def test_gated_carries_description_and_is_an_exception():
 def test_repr_hides_image_payload():
     r = ToolResult(status="ok", text="ok", image_b64="A" * 5000)
     assert "AAAA" not in repr(r)
+
+
+# ---- review round 1 (PR #17): first line of text starts with the status word ----
+def _gate_for(status):
+    return desc() if status == "awaiting_confirmation" else None
+
+
+@pytest.mark.parametrize("status", STATUSES)
+@pytest.mark.parametrize("text", [
+    "{s}", "{s}: done", "{s}\nsecond line", "{s} - details", "{s}:\n\nmore",
+])
+def test_text_first_line_starting_with_status_is_accepted(status, text):
+    t = text.format(s=status)
+    assert ToolResult(status=status, text=t, gate=_gate_for(status)).text == t
+
+
+@pytest.mark.parametrize("status", STATUSES)
+@pytest.mark.parametrize("text", [
+    "", "   ", "done", "Something went wrong", "\n{s}: leading newline",
+    " {s}: leading space", "{S}: wrong case", "{s}x: no word boundary",
+    "{s}_x", "line one\n{s}: status only on the second line",
+])
+def test_text_not_starting_with_status_is_rejected(status, text):
+    bad = text.format(s=status, S=status.upper())
+    with pytest.raises(ValueError) as exc:
+        ToolResult(status=status, text=bad, gate=_gate_for(status))
+    assert status in str(exc.value)
+
+
+def test_another_status_word_is_not_accepted():
+    with pytest.raises(ValueError):
+        ToolResult(status="ok", text="error: it failed")
+    with pytest.raises(ValueError):
+        ToolResult(status="blocked", text="cancelled: stopped")
+
+
+def test_error_message_does_not_echo_text():
+    with pytest.raises(ValueError) as exc:
+        ToolResult(status="ok", text="SECRET PAGE TEXT")
+    assert "SECRET" not in str(exc.value)
+
+
+def test_readback_is_kept_on_action_description():
+    d = desc(readback="Post this comment: hello")
+    assert d.readback == "Post this comment: hello"
+    assert [f.name for f in dataclasses.fields(ActionDescription)][-1] == "readback"

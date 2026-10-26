@@ -1,6 +1,7 @@
 """Shared result types, exactly as in docs/TOOL_CONTRACT.json (tool_result, risk classes)."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Literal, Optional, get_args
 
@@ -31,7 +32,11 @@ class ActionDescription:
 
 @dataclass(frozen=True)
 class ToolResult:
-    """Every tool returns this. The model sees text and, for `look`, an image."""
+    """Every tool returns this. The model sees text and, for `look`, an image.
+
+    Contract: the first line of `text` starts with the status word (then end of line or a
+    non-word character), e.g. "ok: clicked Reply".
+    """
 
     status: Status
     text: str
@@ -41,6 +46,10 @@ class ToolResult:
     def __post_init__(self) -> None:
         if self.status not in STATUSES:
             raise ValueError(f"unknown status: {self.status!r}")
+        first_line = self.text.split("\n", 1)[0]
+        if not re.match(re.escape(self.status) + r"(?![A-Za-z0-9_])", first_line):
+            # Never echo the text: it may hold page content or typed values.
+            raise ValueError(f"text must start with the status word {self.status!r}")
         if self.status == "awaiting_confirmation" and self.gate is None:
             raise ValueError("awaiting_confirmation requires a gate")
         if self.status != "awaiting_confirmation" and self.gate is not None:

@@ -108,3 +108,133 @@ def test_each_line_flushed_immediately(tmp_path):
     log = SessionLog(p)
     log.mark("stop_requested", source="hotkey")
     assert read_lines(p)[0]["source"] == "hotkey"  # readable without close()
+
+
+# ---- review round 1 (PR #17): no free text, concurrency, write failures ----
+import threading
+
+from agent.session_log import PLACEHOLDER
+
+
+@pytest.mark.parametrize("field", ["reason", "source"])
+@pytest.mark.parametrize("secret", ["hunter2 pass", "Buy now!", "P@ssw0rd", "a" * 33, "UPPER", "x\ny", ""])
+def test_short_typed_secret_or_snippet_in_allowed_field_is_not_written(tmp_path, field, secret):
+    p = tmp_path / "s.jsonl"
+    SessionLog(p).mark("tool_end", **{field: secret})
+    raw = p.read_text(encoding="utf-8")
+    if secret:
+        assert secret not in raw and secret.strip() not in raw
+    row = read_lines(p)[0]
+    assert row[field] == PLACEHOLDER == "redacted"
+    assert field in row["dropped_fields"]
+
+
+@pytest.mark.parametrize("ok", ["hotkey", "a1", "tool.end", "x:y", "snake_case-1", "a" * 32])
+def test_identifier_like_values_are_kept(tmp_path, ok):
+    p = tmp_path / "s.jsonl"
+    SessionLog(p).mark("stop_requested", source=ok, reason=ok)
+    row = read_lines(p)[0]
+    assert row["source"] == ok and row["reason"] == ok
+    assert "dropped_fields" not in row
+
+
+def test_non_finite_numbers_do_not_break_json(tmp_path):
+    p = tmp_path / "s.jsonl"
+    SessionLog(p).mark("tool_end", duration_ms=float("nan"), count=float("inf"))
+    row = read_lines(p)[0]  # must be strict-valid JSON
+    assert row["duration_ms"] == PLACEHOLDER and row["count"] == PLACEHOLDER
+
+
+def test_empty_mark_has_only_t_ms_and_event(tmp_path):
+    p = tmp_path / "s.jsonl"
+    SessionLog(p).mark("key_up")
+    assert set(read_lines(p)[0]) == {"t_ms", "event"}
+
+
+def test_two_logs_same_file_threads_no_lost_or_interleaved_lines(tmp_path):
+    p = tmp_path / "s.jsonl"
+    logs = [SessionLog(p), SessionLog(p)]
+    n = 300
+    start = threading.Barrier(2)
+
+    def work(i):
+        start.wait()
+        for j in range(n):
+            logs[i].mark("tool_end", tool=f"w{i}", call_id=f"c{j}", status="ok")
+
+    ts = [threading.Thread(target=work, args=(i,)) for i in range(2)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    lines = p.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2 * n
+    rows = [json.loads(l) for l in lines]  # every line valid JSON
+    for i in range(2):
+        assert [r["call_id"] for r in rows if r["tool"] == f"w{i}"] == [f"c{j}" for j in range(n)]
+
+
+def test_many_threads_one_instance(tmp_path):
+    p = tmp_path / "s.jsonl"
+    log = SessionLog(p)
+    ts = [threading.Thread(target=lambda i=i: [log.mark("key_down", turn=i) for _ in range(100)])
+          for i in range(8)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert len(read_lines(p)) == 800
+
+
+def test_each_mark_is_a_single_write_call(tmp_path, monkeypatch):
+    # One write() per line (append mode) keeps lines whole when two processes append.
+    import os
+    calls = []
+    real_write = os.write
+
+    def spy(fd, data):
+        calls.append(bytes(data))
+        return real_write(fd, data)
+
+    monkeypatch.setattr(os, "write", spy)
+    p = tmp_path / "s.jsonl"
+    SessionLog(p).mark("tool_start", tool="navigate")
+    assert len(calls) == 1
+    assert calls[0].endswith(b"\n") and calls[0].count(b"\n") == 1
+    assert json.loads(p.read_text())["tool"] == "navigate"
+
+
+def test_write_failure_does_not_raise_and_is_counted(tmp_path):
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    log = SessionLog(blocker / "sub" / "s.jsonl")  # parent is a file: mkdir/open fails
+    log.mark("key_down")
+    log.mark("key_up")
+    assert log.failures == 2
+
+
+def test_write_failure_read_only_dir(tmp_path):
+    import os
+    if os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0):
+        pytest.skip("permission bits not enforced here (Windows or root)")
+    d = tmp_path / "ro"
+    d.mkdir()
+    d.chmod(0o500)
+    try:
+        log = SessionLog(d / "s.jsonl")
+        log.mark("key_down")
+        assert log.failures == 1
+    finally:
+        d.chmod(0o700)
+
+
+def test_log_recovers_after_failure(tmp_path):
+    p = tmp_path / "s.jsonl"
+    log = SessionLog(p)
+    p.mkdir()  # path is a directory: open fails
+    log.mark("key_down")
+    assert log.failures == 1
+    p.rmdir()
+    log.mark("key_up")
+    assert [r["event"] for r in read_lines(p)] == ["key_up"] and log.failures == 1
+
+
+def test_unknown_mark_still_raises_even_when_writes_fail(tmp_path):
+    with pytest.raises(ValueError):
+        SessionLog(tmp_path / "a" / "b.jsonl").mark("nope")
