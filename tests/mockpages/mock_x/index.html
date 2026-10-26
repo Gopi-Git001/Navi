@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mock X (local test page, not X)</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #fff; color: #0f1419; }
+  #banner { background: #1d9bf0; color: #fff; padding: 6px 12px; font-size: 13px; }
+  #app { max-width: 620px; margin: 0 auto; padding: 8px 12px; }
+  article { border-bottom: 1px solid #ddd; padding: 10px 0; }
+  .ctx { font-size: 12px; color: #536471; }
+  .author { font-weight: 700; }
+  .handle, .time { color: #536471; font-size: 13px; }
+  .actions { display: flex; gap: 12px; margin-top: 6px; }
+  [role=button] { cursor: pointer; padding: 4px 10px; border: 1px solid #ccc; border-radius: 14px; font-size: 13px; user-select: none; }
+  [role=button][aria-disabled=true] { opacity: .45; cursor: not-allowed; }
+  [role=textbox] { min-height: 48px; border: 1px solid #aaa; padding: 8px; border-radius: 6px; margin: 8px 0; }
+  #post-button, #dm-send { background: #1d9bf0; color: #fff; border-color: #1d9bf0; display: inline-block; }
+  [role=dialog], [role=alertdialog], [role=menu] { position: fixed; background: #fff; border: 1px solid #888; border-radius: 8px; padding: 12px; box-shadow: 0 4px 20px rgba(0,0,0,.3); z-index: 10; }
+  [role=dialog], [role=alertdialog] { top: 80px; left: 50%; transform: translateX(-50%); width: 420px; }
+  [role=menu] { width: 160px; }
+  [role=menuitem] { padding: 6px 4px; cursor: pointer; }
+  #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #0f1419; color: #fff; padding: 8px 14px; border-radius: 6px; display: none; }
+  #replies { height: 560px; overflow: auto; position: relative; }
+  nav a { margin-right: 10px; }
+  img.photo { width: 240px; height: 120px; display: block; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div id="banner">Mock X: a local test page. Nothing here contacts x.com.</div>
+<div id="app">
+  <nav>
+    <a id="nav-home" href="#/home">Home</a>
+    <a id="nav-nasa" href="#/NASA">@NASA</a>
+    <a id="nav-search" href="#/search?q=Cloudflare+Workers+news">Search</a>
+    <a id="nav-dm" href="#/messages/mockfriend">Messages</a>
+  </nav>
+  <div id="login-bar" style="display:none"><a id="login-link" href="#/login">Log in</a> to post, reply and message.</div>
+  <main id="view"></main>
+</div>
+<div id="toast" role="status"></div>
+<script src="/common/log.js"></script>
+<script>
+(function () {
+  'use strict';
+  var params = new URLSearchParams(location.search);
+  var variant = params.get('variant') || '';
+  var signedOut = variant === 'signed_out';
+  var repliesLimited = variant === 'replies_limited';
+  var ctrlEnterOnly = variant === 'ctrl_enter_only';
+  var virtualized = variant === 'virtualized';
+  var positionalIds = variant === 'feed_shifts_after_observe';
+  var ME = { name: 'Gopi (mock)', handle: 'gopi_mock' };
+  var PHOTO = "data:image/svg+xml;utf8," + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='240' height='120'><rect width='240' height='120' fill='#223'/><circle cx='120' cy='60' r='30' fill='#fc6'/></svg>");
+  var REPLY_AUTHORS = ['Ada Lovelace','Grace Hopper','Katherine Johnson','Margaret Hamilton','Mae Jemison','Sally Ride','Carl Sagan','Neil deGrasse Tyson'];
+
+  var db = {
+    nasa: [
+      { id: 'n1', author: 'NASA', handle: 'NASA', time: '2h', text: 'Webb captured a new view of a distant nebula.', photo: true },
+      { id: 'n2', author: 'NASA', handle: 'NASA', time: '1d', text: 'Crew-12 arrives at the station tomorrow.', photo: true },
+      { id: 'n3', author: 'NASA', handle: 'NASA', time: '3d', text: 'Our rover sent back a sunset from Mars.', photo: true }
+    ],
+    mine: [
+      { id: 'm1', author: ME.name, handle: ME.handle, time: '5m', text: 'My last post: testing Navi locally.', own: true },
+      { id: 'm2', author: ME.name, handle: ME.handle, time: '1h', text: 'My earlier post.', own: true }
+    ],
+    search: [
+      { id: 's1', author: 'Cloud Dev', handle: 'clouddev', time: '1h', text: 'Cloudflare Workers news: new limits announced.' },
+      { id: 's2', author: 'Edge Weekly', handle: 'edgeweekly', time: '3h', text: 'Cloudflare Workers news roundup for the week.' },
+      { id: 's3', author: 'Dev Tools', handle: 'devtools', time: '5h', text: 'Workers AI gets new models, Cloudflare Workers news.' },
+      { id: 's4', author: 'Ops Daily', handle: 'opsdaily', time: '7h', text: 'A fourth post about Workers pricing.' }
+    ],
+    replies: {}
+  };
+  if (variant === 'pinned_first') { db.nasa.unshift({ id: 'n0', author: 'NASA', handle: 'NASA', time: 'pinned', text: 'Pinned: welcome to the NASA account.', photo: true, ctx: 'Pinned' }); }
+  if (variant === 'repost_first') { db.nasa.unshift({ id: 'n0', author: 'ESA', handle: 'esa', time: '30m', text: 'Reposted: ESA mission update.', photo: true, ctx: 'NASA reposted' }); }
+  if (variant === 'no_photo') { db.nasa[0].photo = false; db.nasa[0].text = 'Launch window opens at dawn (no photo in this post).'; }
+
+  function repliesFor(id) {
+    if (!db.replies[id]) {
+      var list = [];
+      if (virtualized) { for (var i = 1; i <= 60; i++) list.push({ id: id + '-r' + i, author: 'Replier ' + String(i).padStart(2, '0'), handle: 'replier' + i, time: i + 'm', text: 'Reply number ' + i }); }
+      else { REPLY_AUTHORS.forEach(function (a, i) { list.push({ id: id + '-r' + (i + 1), author: a, handle: a.toLowerCase().replace(/[^a-z]+/g, ''), time: (i + 1) + 'm', text: 'Reply from ' + a }); }); }
+      db.replies[id] = list;
+    }
+    return db.replies[id];
+  }
+  function findPost(id) {
+    var all = db.nasa.concat(db.mine, db.search);
+    for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
+    return null;
+  }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  var view = document.getElementById('view');
+  var toastTimer;
+  function toast(msg) { var t = document.getElementById('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.style.display = 'none'; }, 4000); window.__navi_event({ type: 'toast', text: msg }); }
+  function closeOverlays() { document.querySelectorAll('[role=dialog],[role=alertdialog],[role=menu]').forEach(function (n) { n.remove(); }); }
+
+  function articleHtml(p, idx, opts) {
+    opts = opts || {};
+    var pid = positionalIds ? String(idx) : p.id;
+    var disabled = repliesLimited ? ' aria-disabled="true"' : '';
+    return '<article data-testid="tweet" id="tweet-' + pid + '" data-post="' + p.id + '">' +
+      (p.ctx ? '<div class="ctx" data-testid="socialContext">' + esc(p.ctx) + '</div>' : '') +
+      '<span class="author">' + esc(p.author) + '</span> <span class="handle">@' + esc(p.handle) + '</span> <span class="time">' + esc(p.time) + '</span>' +
+      '<div class="text" data-testid="tweetText"><a id="link-' + pid + '" href="#/status/' + p.id + '">' + esc(p.text) + '</a></div>' +
+      (p.photo ? '<img class="photo" data-testid="tweetPhoto" alt="photo" src="' + PHOTO + '">' : '') +
+      '<div class="actions">' +
+        '<div id="reply-btn-' + pid + '" role="button" data-testid="reply" aria-label="Reply" data-post="' + p.id + '"' + disabled + '>Reply</div>' +
+        '<div id="more-' + pid + '" role="button" data-testid="caret" aria-label="More" data-post="' + p.id + '">...</div>' +
+      '</div></article>';
+  }
+
+  function renderList(list) { return list.map(function (p, i) { return articleHtml(p, i); }).join(''); }
+
+  function composerHtml(kind, replyTo) {
+    var label = kind === 'post' ? 'Post' : 'Reply';
+    var risk = kind === 'post' ? 'post' : 'comment';
+    return '<div id="composer" data-kind="' + kind + '" data-reply-to="' + (replyTo || '') + '">' +
+      '<div id="composer-box" role="textbox" contenteditable="true" data-testid="tweetTextarea_0" aria-label="' + (kind === 'post' ? 'Post text' : 'Post your reply') + '"></div>' +
+      (ctrlEnterOnly ? '' : '<div id="post-button" role="button" data-testid="tweetButton" data-risk="' + risk + '" aria-disabled="true">' + label + '</div>') +
+      '</div>';
+  }
+
+  var inflight = false;
+  function submitPost(via) {
+    var comp = document.getElementById('composer');
+    var box = document.getElementById('composer-box');
+    if (!comp || !box || inflight) return;
+    var text = box.textContent.trim();
+    if (!text) return;
+    var kind = comp.getAttribute('data-kind');
+    var replyTo = comp.getAttribute('data-reply-to') || null;
+    window.__navi_event({ type: 'submit', kind: kind, via: via, text: text, in_reply_to: replyTo });
+    inflight = true;
+    window.__navi_fetch('/i/api/graphql/mock/CreateTweet', { text: text, in_reply_to: replyTo, kind: kind }, { 'X-Mock-Variant': variant })
+      .then(function (r) {
+        inflight = false;
+        if (r.status !== 200) { toast('Something went wrong. Try again.'); return; }
+        var np = { id: 'new' + Date.now(), author: ME.name, handle: ME.handle, time: 'now', text: text, own: true };
+        if (kind === 'post') { db.mine.unshift(np); }
+        else if (replyTo) { repliesFor(replyTo).unshift(np); }
+        toast('Your post was sent.');
+        closeOverlays(); route();
+      }).catch(function () { inflight = false; toast('Something went wrong. Try again.'); });
+  }
+
+  function wireComposer() {
+    var box = document.getElementById('composer-box');
+    var btn = document.getElementById('post-button');
+    if (!box) return;
+    function refresh() { if (btn) btn.setAttribute('aria-disabled', box.textContent.trim() ? 'false' : 'true'); }
+    box.addEventListener('input', refresh);
+    box.addEventListener('keydown', function (e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); submitPost('ctrl_enter'); }
+    });
+    if (btn) btn.addEventListener('click', function () { if (btn.getAttribute('aria-disabled') !== 'true') submitPost('click'); });
+  }
+
+  function openReplyModal(postId) {
+    closeOverlays();
+    if (signedOut) { loginWall(); return; }
+    var p = findPost(postId);
+    var d = document.createElement('div');
+    d.setAttribute('role', 'dialog'); d.id = 'reply-modal'; d.setAttribute('aria-label', 'Reply');
+    d.innerHTML = '<div id="reply-modal-ctx">Replying to @' + esc(p ? p.handle : '') + '</div>' + composerHtml('reply', postId);
+    document.body.appendChild(d);
+    wireComposer();
+    document.getElementById('composer-box').focus();
+  }
+  function loginWall() {
+    var d = document.createElement('div');
+    d.setAttribute('role', 'dialog'); d.id = 'login-wall';
+    d.innerHTML = '<div>Sign in to reply.</div><div id="login-wall-close" role="button">Close</div>';
+    document.body.appendChild(d);
+    d.querySelector('#login-wall-close').addEventListener('click', closeOverlays);
+  }
+  function openMenu(btn) {
+    closeOverlays();
+    var post = findPost(btn.getAttribute('data-post'));
+    var m = document.createElement('div');
+    m.setAttribute('role', 'menu'); m.id = 'more-menu';
+    var r = btn.getBoundingClientRect(); m.style.top = (r.bottom + 4) + 'px'; m.style.left = r.left + 'px';
+    m.innerHTML = post && post.own
+      ? '<div id="menu-delete" role="menuitem" data-testid="menu-delete">Delete</div>'
+      : '<div id="menu-follow" role="menuitem">Follow @' + esc(post ? post.handle : '') + '</div><div id="menu-report" role="menuitem">Report post</div>';
+    document.body.appendChild(m);
+    var del = m.querySelector('#menu-delete');
+    if (del) del.addEventListener('click', function () { openDeleteDialog(post); });
+  }
+  function openDeleteDialog(post) {
+    closeOverlays();
+    var d = document.createElement('div');
+    d.setAttribute('role', 'alertdialog'); d.id = 'delete-dialog';
+    d.innerHTML = '<div>Delete post?</div><div id="delete-text">' + esc(post.text) + '</div>' +
+      '<div id="delete-cancel" role="button">Cancel</div> <div id="delete-confirm" role="button" data-testid="confirmationSheetConfirm" data-risk="delete">Delete</div>';
+    document.body.appendChild(d);
+    d.querySelector('#delete-cancel').addEventListener('click', closeOverlays);
+    d.querySelector('#delete-confirm').addEventListener('click', function () {
+      window.__navi_fetch('/i/api/graphql/mock/DeleteTweet', { id: post.id }, { 'X-Mock-Variant': variant }).then(function (r) {
+        if (r.status === 200) { db.mine = db.mine.filter(function (x) { return x.id !== post.id; }); toast('Your post was deleted.'); }
+        closeOverlays(); route();
+      });
+    });
+  }
+
+  document.addEventListener('click', function (e) {
+    var rb = e.target.closest && e.target.closest('[data-testid=reply]');
+    if (rb) { if (rb.getAttribute('aria-disabled') === 'true') return; openReplyModal(rb.getAttribute('data-post')); return; }
+    var more = e.target.closest && e.target.closest('[data-testid=caret]');
+    if (more) { openMenu(more); return; }
+  });
+
+  function renderVirtualReplies(list) {
+    var box = document.getElementById('replies');
+    var ROW = 80, POOL = 10;
+    var spacer = document.createElement('div'); spacer.style.height = (list.length * ROW) + 'px';
+    box.appendChild(spacer);
+    var nodes = [];
+    for (var i = 0; i < POOL; i++) { var n = document.createElement('div'); n.setAttribute('data-testid', 'reply-row'); n.style.cssText = 'position:absolute;left:0;right:0;height:' + ROW + 'px;'; box.appendChild(n); nodes.push(n); }
+    function paint() {
+      var first = Math.floor(box.scrollTop / ROW);
+      nodes.forEach(function (n, k) {
+        var idx = first + k; var item = list[idx];
+        if (!item) { n.style.display = 'none'; return; }
+        n.style.display = 'block'; n.style.top = (idx * ROW) + 'px';
+        n.id = 'reply-row-' + k;   /* ids are recycled with the node: the same id points at a new reply after a scroll */
+        n.setAttribute('data-index', idx);
+        n.innerHTML = '<span class="author">' + esc(item.author) + '</span> <span class="handle">@' + esc(item.handle) + '</span><div>' + esc(item.text) + '</div>';
+      });
+    }
+    box.addEventListener('scroll', paint); paint();
+  }
+
+  function route() {
+    closeOverlays();
+    var hash = location.hash || '#/home';
+    var path = hash.replace(/^#/, '');
+    var q = '';
+    if (path.indexOf('?') > -1) { q = path.split('?')[1]; path = path.split('?')[0]; }
+    document.getElementById('login-bar').style.display = signedOut ? 'block' : 'none';
+    document.body.setAttribute('data-route', path);
+    window.__navi_event({ type: 'route', path: path });
+    if (path === '/home') {
+      view.innerHTML = '<h2>Home</h2>' + (signedOut ? '' : composerHtml('post', '')) + '<section id="feed">' + renderList(db.mine.concat(db.nasa.slice(0, 2))) + '</section>';
+      wireComposer();
+    } else if (path === '/NASA') {
+      view.innerHTML = '<h2>NASA <span class="handle">@NASA</span></h2><section id="feed">' + renderList(db.nasa) + '</section>';
+      if (positionalIds) { setTimeout(function () {
+        db.nasa.unshift({ id: 'nx' + Date.now(), author: 'NASA', handle: 'NASA', time: 'now', text: 'Breaking: a brand new post just landed.', photo: true });
+        window.__navi_event({ type: 'feed_shift' });
+        var feed = document.getElementById('feed'); if (feed) feed.innerHTML = renderList(db.nasa);
+      }, 2000); }
+    } else if (path === '/search') {
+      view.innerHTML = '<h2>Search</h2><div id="search-query">' + esc(decodeURIComponent((q.split('=')[1] || '').replace(/\+/g, ' '))) + '</div><section id="feed">' + renderList(db.search) + '</section>';
+    } else if (path.indexOf('/status/') === 0) {
+      var id = path.split('/')[2]; var p = findPost(id) || findPost(id.replace(/-r\d+$/, ''));
+      var isReply = !p && /-r\d+$/.test(id);
+      if (!p) { p = repliesFor(id.replace(/-r\d+$/, '')).filter(function (r) { return r.id === id; })[0]; }
+      var list = repliesFor(id);
+      view.innerHTML = '<section id="focal">' + (p ? articleHtml(p, 0) : '<div>Post not found</div>') + '</section>' +
+        (signedOut ? '<div id="reply-gate">Log in to reply.</div>' : (repliesLimited ? '<div id="reply-limited">Who can reply? Accounts @NASA follows can reply.</div>' : composerHtml('reply', id))) +
+        '<section id="replies" data-testid="replies">' + (virtualized ? '' : list.map(function (r, i) { return articleHtml(r, i + 1); }).join('')) + '</section>';
+      if (virtualized) renderVirtualReplies(list);
+      wireComposer();
+    } else if (path.indexOf('/messages/') === 0) {
+      var who = path.split('/')[2];
+      view.innerHTML = '<h2>Messages with @' + esc(who) + '</h2><div id="dm-thread" data-testid="dm-thread"><div class="dm-msg">Hi from @' + esc(who) + '</div></div>' +
+        (signedOut ? '<div id="reply-gate">Log in to message.</div>' : '<div id="dm-box" role="textbox" contenteditable="true" data-testid="dmComposerTextInput" data-recipient="' + esc(who) + '" aria-label="Message"></div>' +
+        '<div id="dm-send" role="button" data-testid="dmComposerSendButton" data-risk="dm" aria-disabled="true">Send</div>');
+      var dbx = document.getElementById('dm-box'); var ds = document.getElementById('dm-send');
+      if (dbx) {
+        var send = function (via) {
+          var t = dbx.textContent.trim(); if (!t) return;
+          window.__navi_event({ type: 'submit', kind: 'dm', via: via, text: t, recipient: who });
+          window.__navi_fetch('/i/api/1.1/dm/new', { recipient: who, text: t }, { 'X-Mock-Variant': variant }).then(function (r) {
+            if (r.status === 200) { var m = document.createElement('div'); m.className = 'dm-msg'; m.textContent = t; document.getElementById('dm-thread').appendChild(m); dbx.textContent = ''; ds.setAttribute('aria-disabled', 'true'); toast('Message sent.'); }
+            else toast('Something went wrong. Try again.');
+          });
+        };
+        dbx.addEventListener('input', function () { ds.setAttribute('aria-disabled', dbx.textContent.trim() ? 'false' : 'true'); });
+        dbx.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send('enter'); } });
+        ds.addEventListener('click', function () { if (ds.getAttribute('aria-disabled') !== 'true') send('click'); });
+      }
+    } else if (path === '/login') {
+      view.innerHTML = '<h2>Log in</h2><p id="login-note">This mock page has no real sign-in.</p>';
+    } else {
+      view.innerHTML = '<h2>Not found</h2>';
+    }
+  }
+  window.addEventListener('hashchange', route);
+  window.__mock = { variant: variant, route: route };
+  route();
+})();
+</script>
+</body>
+</html>
