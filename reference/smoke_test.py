@@ -26,6 +26,17 @@ HTML = """<!doctype html><html><head><title>Test Shop</title></head><body style=
  s.getElementById('sb').onclick=()=>document.getElementById('res').textContent='shadow clicked';}});</script>
 </body></html>"""
 
+XHTML = """<!doctype html><html><head><title>Mock X composer</title></head><body style="font-family:sans-serif">
+<h1>Mock X</h1>
+<div id=box role=textbox contenteditable=true aria-label="Post text" style="border:1px solid #888;min-height:40px;padding:6px"
+ onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){document.getElementById('res').textContent='POSTED by ctrl+enter: '+this.textContent}"></div>
+<div id=postbtn role=button aria-label="Post" style="display:inline-block;border:1px solid #888;padding:4px 10px"
+ onclick="document.getElementById('res').textContent='POSTED by click: '+document.getElementById('box').textContent">Post</div>
+<div id=replybtn role=button style="display:inline-block;border:1px solid #888;padding:4px 10px"
+ onclick="document.getElementById('res').textContent='REPLIED by click'">Reply</div>
+<div id=res>nothing sent</div>
+</body></html>"""
+
 class Cfg:
     headless = True
     browser_channel = None
@@ -123,6 +134,27 @@ async def main():
     assert "Unknown" in r
     r = (await reg.call("click", {"element_id": 999})).text
     assert "no longer exists" in r, r
+    # TASK 2 (X buttons): div role=button Post/Reply and Ctrl+Enter must be gated like a form submit.
+    # (Independent of task 1: it only uses the word "confirm", which approves under both the old and new gate.)
+    fx = Cfg.output_dir / "x.html"; fx.write_text(XHTML)
+    sx = (await reg.call("navigate", {"url": fx.as_uri()})).text
+    composer = find(sx, '"Post text"')
+    r = (await reg.call("type_text", {"element_id": composer, "text": "Great photo"})).text
+    assert "Typed" in r, r
+    sx = (await reg.call("observe", {})).text
+    r = (await reg.call("click", {"element_id": find(sx, '"Post"')})).text
+    assert r.startswith("CONFIRMATION_REQUIRED"), "div role=button Post must be gated: " + r[:80]
+    r = (await reg.call("click", {"element_id": find(sx, '"Reply"')})).text
+    assert r.startswith("CONFIRMATION_REQUIRED"), "div role=button Reply must be gated: " + r[:80]
+    assert "nothing sent" in (await b.read_page("full")), "a gated button click still sent something"
+    r = (await reg.call("type_text", {"element_id": composer, "text": "Great photo"})).text
+    r = (await reg.call("press_key", {"key": "Control+Enter"})).text
+    assert r.startswith("CONFIRMATION_REQUIRED"), "Ctrl+Enter in the composer must be gated: " + r[:80]
+    assert "nothing sent" in (await b.read_page("full")), "Ctrl+Enter posted without confirmation"
+    gate.note_user("confirm")
+    r = (await reg.call("press_key", {"key": "Control+Enter", "confirmed": True})).text
+    assert r.startswith("Pressed"), "after 'confirm', Ctrl+Enter should go through: " + r[:80]
+    assert "POSTED by ctrl+enter: Great photo" in (await b.read_page("full")), "approved Ctrl+Enter did not post"
     print("schemas:", len(TOOL_SCHEMAS), "screenshot:", Cfg.output_dir / "shot.jpg")
     await b.close()
     print("ALL SMOKE TESTS PASSED")

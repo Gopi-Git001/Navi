@@ -34,11 +34,11 @@ class Config:
 
     @classmethod
     def load(cls) -> "Config":
-        load_dotenv(ROOT / ".env")
+        load_dotenv(ROOT / ".env", override=True)
         key = os.getenv("OPENAI_API_KEY", "")
         if not key:
             sys.exit("OPENAI_API_KEY is missing. Copy .env.example to .env and fill it in.")
-        default_channel = "msedge" if sys.platform.startswith("win") else ""
+        default_channel = "chrome"
         channel = os.getenv("BROWSER_CHANNEL", default_channel).strip() or None
         out = Path(os.getenv("OUTPUT_DIR", ROOT / "output"))
         prof = Path(os.getenv("PROFILE_DIR", ROOT / ".browser_profile"))

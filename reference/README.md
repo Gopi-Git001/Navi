@@ -27,7 +27,7 @@ in a background tab — all from voice commands, using OpenAI's Realtime API.
 
 ## Setup (Windows)
 
-Requires Python 3.10+ and a microphone. Microsoft Edge is used by default, so no browser download is needed.
+Requires Python 3.10+ and a microphone. Google Chrome is used by default (set `BROWSER_CHANNEL=msedge` for Edge), so no browser download is needed.
 
 ```powershell
 cd voice_browser_agent
@@ -57,6 +57,8 @@ python main.py --mode text               # type instead of talk
 ```
 
 Console commands in any mode: type a command, `/stop`, `/mute`, `/quit`.
+
+**Stop everything, any time: press Ctrl+Shift+Space** (works from any window, in push-to-talk and hands-free modes). It silences Navi, cancels the reply, and cancels the action that is running. Stop wins even if you are holding Right Ctrl for push-to-talk.
 
 ## Things to say
 

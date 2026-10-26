@@ -137,6 +137,58 @@ class PushToTalk:
         self.listener.stop()
 
 
+class StopHotkey:
+    """Global Ctrl+Shift+Space. Stop always wins, even while push-to-talk is held.
+
+    The chord logic (`press` / `release`) works on plain names so it can be tested without a keyboard.
+    It fires once per chord: Space has to be released before it can fire again.
+    """
+
+    def __init__(self, on_stop):
+        self.on_stop = on_stop
+        self.down: set[str] = set()
+        self.fired = False
+        self.listener = None
+
+    @staticmethod
+    def name_of(key) -> str | None:
+        n = getattr(key, "name", None) or ""
+        if n.startswith("ctrl"):
+            return "ctrl"
+        if n.startswith("shift"):
+            return "shift"
+        if n == "space":
+            return "space"
+        return None
+
+    def press(self, name: str | None) -> bool:
+        if not name:
+            return False
+        self.down.add(name)
+        if {"ctrl", "shift", "space"} <= self.down and not self.fired:
+            self.fired = True
+            self.on_stop()
+            return True
+        return False
+
+    def release(self, name: str | None) -> None:
+        if not name:
+            return
+        self.down.discard(name)
+        if not {"ctrl", "shift", "space"} <= self.down:
+            self.fired = False  # chord broken; the next full press fires again
+
+    def start(self):
+        from pynput import keyboard
+        self.listener = keyboard.Listener(on_press=lambda k: self.press(self.name_of(k)),
+                                          on_release=lambda k: self.release(self.name_of(k)))
+        self.listener.start()
+
+    def stop(self):
+        if self.listener:
+            self.listener.stop()
+
+
 # ---------------------------------------------------------------------------- session
 class VoiceSession:
     def __init__(self, cfg, registry, gate, mode: str = "ptt", headphones: bool = False,
@@ -150,6 +202,9 @@ class VoiceSession:
         self.player: Player | None = None
         self.mic: Mic | None = None
         self.ptt: PushToTalk | None = None
+        self.stop_key: StopHotkey | None = None
+        self.action_stopped = False                    # True only when the stop key cancelled the action
+        self.action_task: asyncio.Task | None = None   # the tool call that is running right now
         self.mic_q: asyncio.Queue = asyncio.Queue()
         self.response_active = False
         self.response_wanted = False
@@ -205,6 +260,13 @@ class VoiceSession:
                 if self.mode == "ptt":
                     self.ptt = PushToTalk(self.loop, self.cfg.ptt_key, self._ptt_down, self._ptt_up)
                     self.ptt.start()
+            if self.mode != "text":
+                try:
+                    self.stop_key = StopHotkey(lambda: self.loop.call_soon_threadsafe(self.stop_everything))
+                    self.stop_key.start()
+                except Exception as e:  # no keyboard hook available: /stop still works
+                    self.stop_key = None
+                    log("sys", f"stop hotkey unavailable ({e}); type /stop instead")
             self._banner()
             try:
                 done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -214,7 +276,7 @@ class VoiceSession:
                     if t.exception():
                         raise t.exception()
             finally:
-                for x in (self.ptt, self.mic, self.player):
+                for x in (self.ptt, self.stop_key, self.mic, self.player):
                     if x:
                         try:
                             x.stop()
@@ -231,7 +293,7 @@ class VoiceSession:
         else:
             how = "Type commands below."
         print("\n" + "=" * 70 + f"\n Navi browser agent ready. {how}\n Typing works too. /mute toggles the mic, "
-              "/stop cancels, /quit exits.\n" + "=" * 70 + "\n", flush=True)
+              "/stop cancels, /quit exits.\n Ctrl+Shift+Space stops everything, any time.\n" + "=" * 70 + "\n", flush=True)
 
     # ------------------------------------------------------------ input paths
     def _interrupt(self):
@@ -241,6 +303,36 @@ class VoiceSession:
             self.player.clear()
         if self.response_active:
             asyncio.ensure_future(self.send({"type": "response.cancel"}))
+
+    def stop_everything(self):
+        """Stop hotkey / /stop: silence the speaker, cancel the reply, cancel the running action.
+
+        Safe to call at any time, any number of times. A push-to-talk recording in progress is
+        thrown away, so releasing the key afterwards sends nothing.
+        """
+        self._interrupt()
+        self.response_wanted = False
+        if self.recording:
+            self.recording = False
+        if self.action_task and not self.action_task.done():
+            self.action_stopped = True
+            self.action_task.cancel()
+        self._clear_confirm_hold()
+        if self.ws is not None:
+            asyncio.ensure_future(self.send({"type": "input_audio_buffer.clear"}))
+        log("sys", "STOPPED")
+
+    def _clear_confirm_hold(self):
+        """Stop means stop: a confirmation asked for earlier, or a "confirm" already heard, must not
+        carry over to a later retry. The next risky action has to be asked for and confirmed again."""
+        g = self.gate
+        if g is None:
+            return
+        try:
+            g.pending.clear()
+            g._last_affirm = 0.0
+        except AttributeError:
+            pass
 
     def _ptt_down(self):
         if self.muted:
@@ -299,8 +391,7 @@ class VoiceSession:
                 log("mic", "muted" if self.muted else "unmuted")
                 continue
             if line == "/stop":
-                self._interrupt()
-                log("sys", "stopped")
+                self.stop_everything()
                 continue
             self._interrupt()
             self.gate.note_user(line)
@@ -406,7 +497,19 @@ class VoiceSession:
                 continue
             short = json.dumps(args, ensure_ascii=False)
             log("tool", f"{name} {short[:150]}")
-            res = await self.registry.call(name, args)
+            self.action_stopped = False
+            self.action_task = asyncio.ensure_future(self.registry.call(name, args))
+            try:
+                res = await self.action_task
+            except asyncio.CancelledError:
+                if not self.action_stopped:
+                    raise  # the whole session was cancelled, not just this action
+                log("  ->", "stopped by user")
+                await self._output(call_id, "STOPPED_BY_USER: the user pressed stop. This action may have partly run. Do not continue or retry it. "
+                                         "Look at the page (observe) to see what actually happened before doing anything else.")
+                continue
+            finally:
+                self.action_task = None
             first = res.text.splitlines()[0] if res.text else ""
             log("  ->", first[:150])
             await self._output(call_id, res.text)

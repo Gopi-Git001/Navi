@@ -155,7 +155,11 @@ DESCRIBE = r"""
     /(card.?number|credit.?card|cvv|cvc|security.?code|\bssn\b|social.?security|routing.?number|account.?number|\bpin\b)/.test(hay);
   const btnType = tag === 'button' ? (el.getAttribute('type') || 'submit').toLowerCase() : type;
   const isSubmit = (tag === 'input' && type === 'submit') || (tag === 'button' && btnType === 'submit' && !!el.form);
+  const bt = el.closest('[role=button],button,[type=submit]');
+  const tid = x => (x && x.getAttribute('data-testid')) || '';
+  const ctx = bt ? txt([bt.getAttribute('aria-label') || bt.innerText || '', tid(bt)].join(' ')).slice(0, 160) : '';
   return { tag, type, role: el.getAttribute('role') || '', label, sensitive, isSubmit,
+           testid: tid(el), ctx,
            editable: el.isContentEditable || ['input', 'textarea'].includes(tag) };
 }
 """
@@ -173,9 +177,14 @@ DESCRIBE_AT_POINT = r"""
   const label = txt(c.getAttribute('aria-label') || c.innerText || c.value || c.getAttribute('title') || '').slice(0, 120);
   const isSubmit = (tag === 'input' && type === 'submit') ||
     (tag === 'button' && (c.getAttribute('type') || 'submit') === 'submit' && !!c.form);
-  return { tag, type, label, isSubmit, sensitive: false };
+  return { tag, type, label, isSubmit, sensitive: false, testid: c.getAttribute('data-testid') || '' };
 }
 """
+
+# Facts about the focused element (for keyboard activation of buttons).
+FOCUSED_DESCRIBE = "() => { let a = document.activeElement; " \
+    "while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement; " \
+    "return a ? (" + DESCRIBE.strip() + ")(a) : null; }"
 
 FOCUSED_FORM_SUBMIT = r"""
 () => {
