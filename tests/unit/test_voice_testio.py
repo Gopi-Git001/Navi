@@ -558,3 +558,16 @@ def test_sleep_until_in_the_past_returns_immediately():
     before = vt.now()
     run(vt, c.sleep_until(500.0))
     assert vt.now() == before
+
+
+def test_capture_sink_accepts_a_marks_path_like_the_spec(tmp_path):
+    vt = VirtualTime()
+    clock = StreamClock(time_fn=vt.now, sleep=vt.sleep)
+    marks = tmp_path / "m.jsonl"
+    sink = CaptureSink(tmp_path / "r.wav", str(marks), clock=clock)
+    clock.start()
+    sink.write(np.full(CHUNK_SAMPLES, 8000, dtype="<i2").tobytes())
+    sink.flush()
+    sink.close()  # closes the marks file it opened
+    names = [r["name"] for r in read_marks(marks)]
+    assert names == ["first_sample_out", "audio_silent"]

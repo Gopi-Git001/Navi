@@ -38,13 +38,13 @@ with MarkWriter("output/marks.jsonl", now_ms=src.clock.now_ms) as marks:
 
 ### Additions beyond the TECH_SPEC signatures
 
-Additive only (approved by the Architect); the spec signatures are unchanged.
+Approved by the Architect. Mostly additive; one signature differs from the spec (below).
 
 - `KeyInjector.subscribe(handler)`: how the voice layer receives key events.
 - `ScriptedKeys.from_json(path, clock)`: load a key script file.
 - `FileAudioSource(..., tail_ms=)`: appends silence so a run continues while Navi replies.
 - `StreamClock`: the shared timeline (`now_ms()`, `sleep_until()`).
 - `VirtualTime`: deterministic fake time for unit tests.
-- `CaptureSink(..., clock=)`: takes the shared clock; `flush()` trims to what has played.
+- `CaptureSink(out_wav, marks, clock, ...)`: spec form was `CaptureSink(out_wav, marks_jsonl)`. `marks` is a `MarkWriter` or a path (still accepted), and `clock` is the shared clock. `flush()` trims to what has played.
 
 Real `sounddevice` and `pynput` versions of these interfaces come in M1.

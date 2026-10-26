@@ -304,20 +304,23 @@ class CaptureSink(AudioSink):
     Gaps between writes become silence, and audio written faster than real time is laid out
     back to back (as a real speaker would play it). The first audible sample of each reply is
     marked ``first_sample_out`` (when ``marks`` is given). A reply is "new" after a flush or
-    after ``rearm_gap_ms`` of silence. ``flush()`` drops audio that would not have played yet,
+    after ``rearm_gap_ms`` of silence. ``marks`` is a ``MarkWriter`` or, as in the spec, a path to the marks JSONL (then the sink writes it on ``clock`` and closes it with the sink). ``flush()`` drops audio that would not have played yet,
     and marks ``audio_silent`` at the time of the flush. The WAV is written on ``close()``.
     """
 
     def __init__(
         self,
         out_wav: PathLike,
-        marks: Optional[MarkWriter],
+        marks: Union[MarkWriter, PathLike, None],
         clock: Clock,
         silence_threshold: int = 256,
         rearm_gap_ms: float = 1000.0,
         origin_ms: float = 0.0,
     ) -> None:
         self.out_wav = Path(out_wav)
+        self._owns_marks = isinstance(marks, (str, Path))
+        if self._owns_marks:  # spec form: a marks file path; we write it on the sink's clock
+            marks = MarkWriter(marks, now_ms=clock.now_ms)
         self._marks = marks
         self._clock = clock
         self._thr = silence_threshold
@@ -382,3 +385,5 @@ class CaptureSink(AudioSink):
             w.setsampwidth(2)
             w.setframerate(SAMPLE_RATE)
             w.writeframes(data.astype("<i2").tobytes())
+        if self._owns_marks and self._marks is not None:
+            self._marks.close()
