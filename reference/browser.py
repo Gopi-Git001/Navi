@@ -10,7 +10,7 @@ from urllib.parse import quote_plus
 from playwright.async_api import Page, async_playwright
 
 import page_scripts as JS
-from safety import ConfirmationGate
+from safety import RISKY, ConfirmationGate
 
 DOMAIN_RE = re.compile(r"^[\w-]+(\.[\w-]+)+(:\d+)?(/.*)?$")
 SEARCH_URLS = {
@@ -20,6 +20,20 @@ SEARCH_URLS = {
     "youtube": "https://www.youtube.com/results?search_query={}",
     "amazon": "https://www.amazon.com/s?k={}",
 }
+
+_CAMEL = re.compile(r"([a-z0-9])([A-Z])")
+
+
+def _widen(info: dict | None) -> dict | None:
+    """Fold data-testid / enclosing role=button text into the label when it reads risky
+    (e.g. an icon-only div role=button with data-testid="tweetButton"), so the gate sees it."""
+    if not info or RISKY.search(info.get("label") or ""):
+        return info
+    extra = " ".join(x for x in (info.get("testid"), info.get("ctx")) if x)
+    extra = re.sub(r"[^A-Za-z0-9]+", " ", _CAMEL.sub(r"\1 \2", extra)).strip()
+    if extra and RISKY.search(extra):
+        return {**info, "label": f"{info.get('label') or ''} ({extra})".strip()}
+    return info
 
 
 class Browser:
@@ -254,7 +268,7 @@ class Browser:
         loc, center = await self._center(element_id)
         if loc is None:
             return self._missing(element_id)
-        info = await loc.evaluate(JS.DESCRIBE)
+        info = _widen(await loc.evaluate(JS.DESCRIBE))
         blocked = await self.gate.check(f"{self.page.url}|{info['label']}", info, confirmed)
         if blocked:
             return blocked
@@ -268,7 +282,7 @@ class Browser:
 
     async def click_at(self, x: float, y: float, confirmed: bool = False, double: bool = False) -> str:
         page = await self._ensure_page()
-        info = await page.evaluate(JS.DESCRIBE_AT_POINT, [x, y])
+        info = _widen(await page.evaluate(JS.DESCRIBE_AT_POINT, [x, y]))
         blocked = await self.gate.check(f"{page.url}|{(info or {}).get('label', '')}", info, confirmed)
         if blocked:
             return blocked
@@ -419,10 +433,28 @@ class Browser:
 
     async def press_key(self, key: str, confirmed: bool = False) -> str:
         page = await self._ensure_page()
-        if key.lower() in ("enter", "return", "numpadenter"):
+        parts = [p.strip().lower() for p in key.split("+")] if len(key) > 1 else [key.lower()]
+        base, mods = (parts[-1] or "+"), set(parts[:-1])
+        is_enter = base in ("enter", "return", "numpadenter")
+        if is_enter and mods & {"control", "ctrl", "meta", "cmd", "command", "controlormeta"}:
+            # Ctrl/Cmd+Enter is the "send/post" shortcut in composers (X etc.): always gate it.
+            f = await page.evaluate(JS.FOCUSED_DESCRIBE) or {}
+            info = {"tag": "composer", "type": "submit", "isSubmit": True, "sensitive": False,
+                    "label": f"send/post via {key} (" + (f.get("label") or f.get("tag") or "focused element") + ")"}
+            blocked = await self.gate.check(f"{page.url}|{info['label']}", info, confirmed)
+            if blocked:
+                return blocked
+        elif is_enter:
             # Enter inside a form submits it: gate it like clicking that form's submit button.
             info = await page.evaluate(JS.FOCUSED_FORM_SUBMIT)
             if info:
+                blocked = await self.gate.check(f"{page.url}|{info['label']}", info, confirmed)
+                if blocked:
+                    return blocked
+        if (is_enter or base in ("space", " ")) and not mods:
+            # Enter/Space on a focused button activates it: gate like a click on it.
+            info = _widen(await page.evaluate(JS.FOCUSED_DESCRIBE))
+            if info and (info["tag"] == "button" or info["role"] == "button"):
                 blocked = await self.gate.check(f"{page.url}|{info['label']}", info, confirmed)
                 if blocked:
                     return blocked
