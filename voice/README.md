@@ -36,4 +36,15 @@ with MarkWriter("output/marks.jsonl", now_ms=src.clock.now_ms) as marks:
 - **Unit tests** use `VirtualTime`, which makes sleeps free and timings exact:
   `python -m pytest tests/unit/test_voice_testio.py`.
 
+### Additions beyond the TECH_SPEC signatures
+
+Additive only (approved by the Architect); the spec signatures are unchanged.
+
+- `KeyInjector.subscribe(handler)`: how the voice layer receives key events.
+- `ScriptedKeys.from_json(path, clock)`: load a key script file.
+- `FileAudioSource(..., tail_ms=)`: appends silence so a run continues while Navi replies.
+- `StreamClock`: the shared timeline (`now_ms()`, `sleep_until()`).
+- `VirtualTime`: deterministic fake time for unit tests.
+- `CaptureSink(..., clock=)`: takes the shared clock; `flush()` trims to what has played.
+
 Real `sounddevice` and `pynput` versions of these interfaces come in M1.
