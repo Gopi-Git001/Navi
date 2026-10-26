@@ -27,7 +27,7 @@ in a background tab — all from voice commands, using OpenAI's Realtime API.
 
 ## Setup (Windows)
 
-Requires Python 3.10+ and a microphone. Microsoft Edge is used by default, so no browser download is needed.
+Requires Python 3.10+ and a microphone. Google Chrome is used by default (set `BROWSER_CHANNEL=msedge` for Edge), so no browser download is needed.
 
 ```powershell
 cd voice_browser_agent
