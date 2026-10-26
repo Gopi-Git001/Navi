@@ -62,6 +62,9 @@ async def gate_rules():
     g = ConfirmationGate()
     await g.check("a", info, False); g.note_user("confirm"); g.note_user("scroll down")
     assert req(await g.check("a", info, True)), "unrelated command must cancel an unused confirm"
+    g = ConfirmationGate()
+    await g.check("a", info, False); g.note_user("go to google dot com"); g.note_user("confirm")
+    assert req(await g.check("a", info, True)), "confirm after an unrelated command must not approve the old held action"
     old = safety.CONFIRM_TTL
     safety.CONFIRM_TTL = 0.2
     try:

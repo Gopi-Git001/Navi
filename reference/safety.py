@@ -56,8 +56,8 @@ class ConfirmationGate:
         else:
             # Any other utterance cancels an unused "confirm" so it cannot carry over.
             self._last_affirm = 0.0
-            if NEGATE.search(text):
-                self.pending.clear()
+            # ...and so does the held action: after any other command it must be read back again.
+            self.pending.clear()
         self._user_event.set()
 
     async def check(self, key: str, info: dict | None, confirmed: bool) -> str | None:
