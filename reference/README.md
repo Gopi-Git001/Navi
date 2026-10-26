@@ -58,6 +58,8 @@ python main.py --mode text               # type instead of talk
 
 Console commands in any mode: type a command, `/stop`, `/mute`, `/quit`.
 
+**Stop everything, any time: press Ctrl+Shift+Space** (works from any window, in push-to-talk and hands-free modes). It silences Navi, cancels the reply, and cancels the action that is running. Stop wins even if you are holding Right Ctrl for push-to-talk.
+
 ## Things to say
 
 - "Open YouTube and search for lo-fi study music, play the second result."
